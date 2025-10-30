@@ -1,0 +1,46 @@
+name: Deploy Apps Script (raw clasp)
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm i -g @google/clasp
+
+      # Recrea el archivo de auth de clasp en el runner
+      - name: Configure clasp auth
+        run: |
+          mkdir -p ~/.config/configstore
+          cat > ~/.clasprc.json <<'JSON'
+          {
+            "token": {
+              "access_token": "${{ secrets.CLASP_ACCESS_TOKEN }}",
+              "refresh_token": "${{ secrets.CLASP_REFRESH_TOKEN }}",
+              "scope": "https://www.googleapis.com/auth/script.projects https://www.googleapis.com/auth/script.deployments https://www.googleapis.com/auth/drive",
+              "token_type": "Bearer",
+              "expiry_date": 0
+            },
+            "oauth2ClientSettings": { "clientId": "", "clientSecret": "" },
+            "isLocalCreds": true
+          }
+          JSON
+
+      # Empuja el código a Apps Script
+      - name: clasp push
+        run: clasp push -f
+
+      # (OPCIONAL) Solo al crear un tag: versiona y despliega
+      - name: version & deploy on tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          clasp version "${GITHUB_REF##*/}"
+          clasp deploy
