@@ -1,3 +1,23 @@
+/**
+ * Proyecto: App – Reserva de Salones (Google Workspace)
+ * Autoría: Usuario solicitante (2024)
+ * Mantenimiento: Equipo de TI interno / colaboradores designados
+ * Descripción:
+ *   Backend principal en Google Apps Script que gestiona el flujo de reservas
+ *   para espacios y salones corporativos. Orquesta la interfaz web (HTML
+ *   incluidos en el proyecto), la lógica de validaciones, la integración con
+ *   Hojas de cálculo y el envío de notificaciones por correo.
+ * Módulos clave:
+ *   - Control de acceso por roles y estados (Usuarios, Admin, Solicitante).
+ *   - Gestión de salones, horarios y disponibilidad mediante la hoja "Reservas".
+ *   - Servicios auxiliares para logos almacenados en Drive y plantillas HTML.
+ * Consideraciones de despliegue:
+ *   - Publicar el Web App como aplicación ejecutándose como propietario y
+ *     accesible solo para los usuarios del dominio deseado.
+ *   - Revisar los permisos OAuth solicitados tras cada ajuste de alcance.
+ * Historial:
+ *   - Versión original Apps Script v1 migrada y extendida sucesivamente.
+ */
 /*********************************
  * App – Reserva de Salones (v1)
  *********************************/
