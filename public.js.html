@@ -6,11 +6,6 @@ let __SALONES__ = [];      // cache local de salones (id, nombre, capacidad, hab
 let __extHintTimer__ = 0;  // timer para ocultar hint de extensión tras un intento inválido
 let __SLOT_INFO__ = {};    // cache local de slots con metadata de disponibilidad
 
-function isProtectedAudience(tipo){
-  const t = String(tipo || '').trim().toLowerCase();
-  return t === 'externo' || t === 'mixto';
-}
-
 function escHtml(str){
   return String(str || '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;',
@@ -63,27 +58,12 @@ function modal(msg, title, opts){
 function showBlockedSlotMessage(slotInfo){
   const userPrio = Number(ME.prioridad) || 0;
   if (!slotInfo || userPrio <= 0) return false;
+  const maxPrio = (slotInfo.maxPrio==null) ? null : Number(slotInfo.maxPrio);
+  if (slotInfo.seleccionable || maxPrio == null || userPrio > maxPrio) return false;
 
   const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
-  const hasProtected = !!slotInfo.requiereCoordinacion || ocupantes.some(o => isProtectedAudience(o.publico_tipo));
-  const maxPrio = (slotInfo.maxPrio==null) ? null : Number(slotInfo.maxPrio);
-  const blockedByPriority = !slotInfo.seleccionable && maxPrio != null && userPrio <= maxPrio;
-
-  if (!hasProtected && !blockedByPriority) return false;
-
-  let relevant = ocupantes;
-  let title = 'Horario reservado';
-  let intro = 'Este horario ya está reservado por otra persona con prioridad igual o mayor.';
-  let closing = 'Debes coordinar con la(s) persona(s) para que cancelen la reserva antes de poder utilizar este horario.';
-
-  if (!hasProtected){
-    const blocking = ocupantes.filter(o => Number(o.prioridad || 0) >= userPrio);
-    relevant = blocking.length ? blocking : ocupantes;
-  } else {
-    title = 'Reserva protegida';
-    intro = 'Este horario está reservado para un evento con público externo o mixto. Por la logística especial no puedes reasignarlo automáticamente.';
-    closing = 'Debes coordinar con la persona responsable o con la administración para solicitar cualquier cambio.';
-  }
+  const blocking = ocupantes.filter(o => Number(o.prioridad || 0) >= userPrio);
+  const relevant = blocking.length ? blocking : ocupantes;
 
   if (relevant.length){
     const items = relevant.map(o => {
@@ -92,17 +72,16 @@ function showBlockedSlotMessage(slotInfo){
       const evento = o.evento ? `<br/><span class="muted">Evento: ${escHtml(o.evento)}</span>` : '';
       const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
       const prioridad = escHtml(String(o.prioridad || 0));
-      const publico = o.publico_tipo ? `<br/><span class="muted">Público: ${escHtml(o.publico_tipo)}</span>` : '';
-      return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+      return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}</li>`;
     }).join('');
     const html = `
-      <p>${intro}</p>
+      <p>Este horario ya está reservado por otra persona con prioridad igual o mayor.</p>
       <ul style="padding-left:18px;margin:8px 0;">${items}</ul>
-      <p>${closing}</p>
+      <p>Debes coordinar con la(s) persona(s) para que cancelen la reserva antes de poder utilizar este horario.</p>
     `;
-    modal(html, title, { html: true });
+    modal(html, 'Horario reservado', { html: true });
   } else {
-    modal(`${intro} ${closing}`, title);
+    modal('Este horario ya está reservado por otra persona con prioridad igual o mayor. Deben coordinar la cancelación para liberar el espacio.', 'Horario reservado');
   }
   return true;
 }
@@ -233,9 +212,7 @@ function refreshSlots(){
         let note = '';
         if (ocupado){
           if (!puede){
-            if (requiereCoord){
-              note = ' (evento externo – coordinar)';
-            } else if (prio > 0){
+            if (prio > 0){
               note = ' (reservado – coordinar)';
             } else if (maxP!=null) {
               note = ' (reservado)';
