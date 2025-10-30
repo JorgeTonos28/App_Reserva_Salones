@@ -1,10 +1,14 @@
-name: Deploy Apps Script (raw clasp)
+name: Apps Script CI/CD (raw clasp)
+
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - "*"              # para que el job de prod se dispare al crear cualquier tag
   workflow_dispatch:
 
 jobs:
+  # CI: cada push a main empuja código a Apps Script (no toca prod)
   deploy:
     runs-on: ubuntu-latest
     steps:
@@ -14,9 +18,10 @@ jobs:
         with:
           node-version: '20'
 
-      - run: npm i -g @google/clasp
+      - name: Install clasp
+        run: npm i -g @google/clasp
 
-      # Recrea el archivo de auth de clasp en el runner
+      # Recrea credenciales de clasp en el runner (desde tus Secrets)
       - name: Configure clasp auth
         run: |
           mkdir -p ~/.config/configstore
@@ -34,13 +39,68 @@ jobs:
           }
           JSON
 
-      # Empuja el código a Apps Script
-      - name: clasp push
+      # (Opcional) Instala dependencias si usas build
+      - name: Install deps if package.json exists
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+          fi
+
+      # (Opcional) Compila si existe script "build"
+      - name: Build (if script exists)
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+            npm run -s build
+          else
+            echo "No build script. Skipping."
+          fi
+
+      # Empuja código al proyecto de Apps Script
+      - name: Push to Apps Script
         run: clasp push -f
 
-      # (OPCIONAL) Solo al crear un tag: versiona y despliega
-      - name: version & deploy on tag
-        if: startsWith(github.ref, 'refs/tags/')
+  # CD: sólo cuando hay tag → versiona y redeploy al MISMO deploymentId (URL estable)
+  prod:
+    needs: [deploy]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm i -g @google/clasp
+
+      - name: Configure clasp auth
         run: |
-          clasp version "${GITHUB_REF##*/}"
-          clasp deploy
+          mkdir -p ~/.config/configstore
+          cat > ~/.clasprc.json <<'JSON'
+          {
+            "token": {
+              "access_token": "${{ secrets.CLASP_ACCESS_TOKEN }}",
+              "refresh_token": "${{ secrets.CLASP_REFRESH_TOKEN }}",
+              "scope": "https://www.googleapis.com/auth/script.projects https://www.googleapis.com/auth/script.deployments https://www.googleapis.com/auth/drive",
+              "token_type": "Bearer",
+              "expiry_date": 0
+            },
+            "oauth2ClientSettings": { "clientId": "", "clientSecret": "" },
+            "isLocalCreds": true
+          }
+          JSON
+
+      # Crea una nueva versión inmutable y captura el número
+      - name: Create version
+        id: ver
+        run: |
+          clasp create-version "release: ${GITHUB_REF_NAME}"
+          # Toma el número de versión más reciente (columna 1)
+          clasp list-versions | tail -n 1 | awk '{print $1}' > version.txt
+          echo "num=$(cat version.txt)" >> $GITHUB_OUTPUT
+
+      # Actualiza (redeploy) el deployment existente para mantener la MISMA URL
+      - name: Redeploy existing deployment (keep same URL)
+        run: |
+          clasp update-deployment "${{ secrets.DEPLOYMENT_ID }}" -V "${{ steps.ver.outputs.num }}"
