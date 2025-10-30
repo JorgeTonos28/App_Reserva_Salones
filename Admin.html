@@ -1,0 +1,188 @@
+<!DOCTYPE html><html>
+<head>
+  <meta charset="utf-8" />
+  <title>Reserva de Salones – Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>(function(){try{var f=(window.top!==window.self);var s=Math.max(screen.width,screen.height)<=880;if(f&&s){window.top.location.href=window.location.href;}}catch(e){}})();</script>
+  <?!= include_('css'); ?>
+</head>
+<body class="container">
+  <header class="card" style="text-align:center">
+    <img id="logo" alt="Logo" style="height:100px"/>
+    <h1 style="margin:6px 0 0">Panel Administrativo | Reserva de Salones</h1>
+    <small>Versión <?= appVersion ?></small>
+  </header>
+  <section class="card">
+    <div class="section-head">
+      <h2 style="margin:0">Salones</h2>
+      <div class="actions-inline">
+        <button id="btnConserjes" class="btn btn-blue btn--sm" type="button" title="Gestionar conserjes" aria-label="Gestionar conserjes">Conserjes</button>
+        <button id="btnUsuarios"  class="btn btn-blue btn--sm" type="button" title="Gestionar usuarios" aria-label="Gestionar usuarios">Usuarios</button>
+      </div>
+    </div>
+    <div id="salones"></div>
+  </section>
+
+  <!-- Modal Conserjes -->
+  <div id="modalCon" class="overlay" hidden>
+    <div class="modal-card" style="max-width:840px; text-align:left;">
+      <h3>Conserjes</h3>
+      <div id="con-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
+      <div class="row g" style="margin-top:6px">
+        <input id="con-nombre" placeholder="Nombre"/>
+        <input id="con-email" placeholder="Correo"/>
+        <input id="con-tel" placeholder="Teléfono"/>
+        <button id="con-save" class="btn-blue" type="button">Guardar</button>
+        <button id="con-close" class="btn btn-blue btn--sm" type="button">Cerrar</button>
+      </div>
+      <small class="muted">Selecciona un conserje de la lista para editar; clic de nuevo para deseleccionar. Si no hay selección, “Guardar” creará un nuevo registro.</small>
+    </div>
+  </div>
+
+  <!-- Modal Usuarios -->
+  <div id="modalUsers" class="overlay" hidden>
+    <div class="modal-card" style="max-width:900px; text-align:left;">
+      <h3>Usuarios</h3>
+      <div id="users-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
+      <div class="row g" style="margin-top:8px">
+        <input id="u-email" placeholder="Correo (obligatorio)"/>
+        <input id="u-nombre" placeholder="Nombre"/>
+        <input id="u-dep" placeholder="Departamento"/>
+        <select id="u-rol">
+          <option value="">[Rol]</option>
+          <option value="ADMIN">ADMIN</option>
+          <option value="SOLICITANTE">SOLICITANTE</option>
+        </select>
+        <input id="u-prio" type="number" min="0" placeholder="Prioridad"/>
+        <select id="u-estado">
+          <option value="">[Estado]</option>
+          <option value="ACTIVO">ACTIVO</option>
+          <option value="PENDIENTE">PENDIENTE</option>
+          <option value="INACTIVO">INACTIVO</option>
+        </select>
+        <input id="u-ext" placeholder="Extensión"/>
+      </div>
+      <div class="row g" style="margin-top:8px">
+        <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
+        <button id="u-close" class="btn btn-blue btn--sm" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sección Crear reserva (Admin) -->
+  <section class="card">
+    <div class="section-head">
+      <h2 style="margin:0">Crear reserva (Admin)</h2>
+      <small class="muted">Mismas reglas del formulario público</small>
+    </div>
+    <!-- Toggle anfitrión -->
+    <div class="section">
+      <div class="qline">
+        <div class="section-title">¿El anfitrión eres tú?</div>
+        <div class="actions-inline">
+          <button id="a-hostYes" class="btn btn-green btn-toggle" type="button" aria-pressed="true">Sí</button>
+          <button id="a-hostNo"  class="btn btn-red  btn-toggle" type="button" aria-pressed="false">No</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-item">
+        <label for="a-fecha">Fecha</label>
+        <input id="a-fecha" type="date" />
+      </div>
+      <div class="form-item">
+        <label for="a-dur">Duración</label>
+        <select id="a-dur"></select>
+      </div>
+      <div class="form-item">
+        <label for="a-salon">Salón</label>
+        <select id="a-salon"></select>
+      </div>
+      <div class="form-item">
+        <label for="a-hora">Hora</label>
+        <select id="a-hora"></select>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Datos del anfitrión</div>
+      <div class="form-grid">
+        <div class="form-item"><label for="a-nombre">Nombre</label><input id="a-nombre" /></div>
+        <div class="form-item">
+          <label for="a-email">Correo</label>
+          <input id="a-email" type="email" placeholder="jperez@infotep.gob.do" />
+          <small id="a-emailError" class="error" hidden>Debe ser un correo @infotep.gob.do</small>
+        </div>
+        <div class="form-item"><label for="a-dep">Departamento</label><input id="a-dep" placeholder="Ej: Innovación"/></div>
+        <div class="form-item">
+          <label for="a-ext">Extensión</label>
+          <input id="a-ext" inputmode="numeric" pattern="[0-9]*" placeholder="Ej: 2239"/>
+          <small id="a-extError" class="error" hidden>Solo números (0–9).</small>
+        </div>
+        <div class="form-item form-item--full"><label for="a-evento">Nombre del evento</label><input id="a-evento" placeholder="Ej: Reunión de proyecto"/></div>
+        <div class="form-item">
+          <label for="a-cant">Cant. de personas <span id="a-capMaxTag" class="label-meta"></span></label>
+          <input id="a-cant" type="number" min="1" placeholder="Ej: 15"/>
+          <small id="a-cantError" class="error" hidden></small>
+        </div>
+        <div class="form-item"><label for="a-publico">Tipo de público</label>
+          <select id="a-publico"><option value="">[Seleccionar]</option><option>Interno</option><option>Externo</option><option>Mixto</option></select>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="a-crear" class="btn-blue">Crear reserva</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Historial de reservas</h2>
+    <div class="row g">
+      <input id="f1" type="date" />
+      <input id="f2" type="date" />
+      <button id="btnBuscar" class="btn-blue">Buscar</button>
+    </div>
+    <div id="reservas"></div>
+  </section>
+
+  <!-- Modal Asignar Conserjes -->
+  <div id="modalAsignar" class="overlay" hidden>
+    <div class="modal-card">
+      <h3>Asignar conserje</h3>
+      <div class="row g">
+        <select id="selConserje"></select>
+      </div>
+      <div class="row g" style="margin-top:10px">
+        <button id="btnAsignarOk" class="btn-blue">Asignar</button>
+        <button id="btnAsignarClose" class="btn-blue" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overlay global -->
+  <div id="overlay" class="overlay" hidden>
+    <div class="spinner" role="status" aria-label="Cargando"></div>
+    <div class="overlay-msg" aria-live="polite">Cargando…</div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="overlay" hidden>
+    <div class="modal-card">
+      <h3 id="mTitle">Mensaje</h3>
+      <p id="mBody"></p>
+      <div class="row g"><button id="mOk" class="btn-blue">Aceptar</button></div>
+    </div>
+  </div>
+
+  <script>
+    window.__LOGO_URL__ = "<?= logoUrl ?>";
+    window.__ME__ = {
+      email: "<?= me && me.email ?>",
+      nombre: "<?= me && me.nombre ?>",
+      departamento: "<?= me && me.departamento ?>",
+      extension: "<?= me && me.extension ?>",
+      prioridad: <?= Number(me && me.prioridad || 0) ?>
+    };
+  </script>
+
+  <?!= include_('admin.js'); ?>
+</body></html>

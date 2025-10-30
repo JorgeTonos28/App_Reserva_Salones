@@ -1,0 +1,283 @@
+<style>
+  /* ======= Variables y base ======= */
+  :root{
+    --blue:#1d4ed8;            /* Botones azules */
+    --blue-600:#2563eb;
+    --border:#e5e7eb;
+    --bg:#f6f7fb;
+    --text:#111827;
+  }
+  body{ font-family: Inter, system-ui, Arial; background:var(--bg); color:var(--text); }
+  .container{ max-width:1100px; margin:24px auto; padding:0 16px; }
+
+  /* ======= Tarjetas / tipografía ======= */
+  .card{ background:#fff; border-radius:14px; padding:16px; margin:12px 0; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .card h2{ margin:0 0 8px; font-size:20px; }
+  .hint{ margin-top:8px; font-size:13px; color:#374151; }
+
+  /* ======= Grids flex genéricos preexistentes ======= */
+  .row{ display:flex; flex-wrap:wrap; gap:12px; }
+  .row.g{ gap:10px; align-items:center; }
+  .g > *{ flex:1 1 240px; min-width:220px; }
+
+  /* ======= Inputs / selects uniformes ======= */
+  input, select{
+    width:100%;
+    height:44px;                 /* altura uniforme */
+    line-height:44px;
+    padding:0 12px;
+    border:1px solid var(--border);
+    border-radius:10px;
+    background:#fff;
+    font-size:14px;
+    box-sizing:border-box;
+  }
+  select:disabled, option:disabled { color:#9ca3af !important; }
+  /* Alinea ícono del date y evita “desfase” */
+  input[type="date"]{ padding-right:8px; }
+  input[type="date"]::-webkit-calendar-picker-indicator{ margin:0 2px 0 0; }
+
+  /* ======= Botones ======= */
+  .btn{ display:inline-flex; align-items:center; justify-content:center; border:none; cursor:pointer; border-radius:10px; padding:8px 14px; line-height:1.2; }
+  .btn-blue{ background:var(--blue); border:none; color:#fff; padding:10px 14px; border-radius:10px; cursor:pointer; }
+  .btn-blue:hover{ background:var(--blue-600); }
+  .btn--sm{ padding:6px 10px; border-radius:8px; font-size:13px; }
+  .btn--sm{ height:36px; font-size:14px; padding:6px 12px; border-radius:8px; }
+  .btn--md{ height:40px; font-size:15px; }
+  .btn--full{ width:100%; }
+  .btn-red { background: #dc2626; color: #fff; }
+  .btn-red:hover { background: #b91c1c; }
+  .btn-green{ background:#059669; color:#fff; }
+  .btn-green:hover{ background:#047857; }
+  .btn-toggle{ border-radius:999px; padding:6px 12px; height:34px; font-size:14px; }
+  .btn-toggle[aria-pressed="true"]{ box-shadow:0 0 0 2px rgba(0,0,0,.05) inset; filter:saturate(1.1); }
+  .actions{ margin-top:14px; }
+
+  /* ======= Tablas ======= */
+  tr.selected { background:#f3f4f6; }
+  table{ width:100%; border-collapse:collapse; }
+  th,td{ padding:10px; border-bottom:1px solid #eee; font-size:14px; }
+  .tag{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#eef2ff; color:#1e40af; }
+
+  /* ======= Overlay & modal ======= */
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; z-index:9999; }
+  .overlay[hidden]{ display:none !important; }
+  .spinner{ width:48px; height:48px; border:4px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg);} }
+  .modal-card{ background:#fff; color:#111; padding:18px; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); max-width:460px; text-align:center; }
+
+  /* Live region (accesibilidad) */
+  .overlay .overlay-msg{ outline:0; }
+
+  /* ======= Layout específico del formulario público ======= */
+  /* Grid de 12 columnas para alinear Fecha/Duración/Hora perfectamente */
+  .form-grid{
+    display:grid;
+    grid-template-columns:repeat(12, 1fr);
+    gap:12px 14px;               /* fila, columna */
+  }
+  .form-item{ grid-column:span 3; }          /* 4 campos por fila en desktop */
+  .form-item--full{ grid-column:1 / -1; }    /* ancho completo */
+
+  /* Etiquetas y ayuda */
+  .form-item label{
+    display:flex;               /* mantiene el meta en línea */
+    align-items:center;
+    gap:6px;
+    font-size:13px;
+    color:#4b5563;
+    margin:0 0 6px;
+  }
+  /* Meta del label: (máx N) compacto e inline */
+  .form-item label .label-meta{
+    font-size:12px;
+    font-weight:500;
+    color:#6b7280;
+    white-space:nowrap;         /* evita salto de línea que desalineaba */
+  }
+
+  /* Label con texto a la izquierda y nota (máx X) a la derecha, en una sola línea */
+  .label-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .label-row .muted{
+    margin:0;
+    font-size:12px;
+    white-space:nowrap; /* evita salto de línea de "(máx X)" */
+  }
+
+  .muted{ display:block; margin-top:6px; font-size:12px; color:#6b7280; }
+
+  /* Secciones visibles dentro de la tarjeta */
+  .section{ padding:10px 0 2px; border-top:1px dashed var(--border); margin-top:10px; }
+  .section:first-of-type{ border-top:none; margin-top:0; }
+  .section-title{ font-weight:600; font-size:14px; color:#374151; margin:0 0 10px; }
+  .card .section + .section{ margin-top:18px; padding-top:18px; }
+
+  .actions .btn-blue{ display:block; width:100%; height:44px; font-weight:600; border-radius:12px; }
+  /* Desktop: botón normal y centrado */
+  @media (min-width: 821px){
+    .actions .btn-blue{ width:auto; min-width:220px; height:40px; margin-inline:auto; }
+  }
+
+  /* Hover consistente con la paleta */
+  .actions .btn-blue:hover{
+    background: var(--blue-600);
+  }
+
+  /* Centrar tabla de "Mis reservas" sin afectar otras tablas */
+  .table-center th,
+  .table-center td{ text-align:center; }
+
+  /* ======= Error Style ======= */
+  .error{ color:#dc2626; font-size:12px; margin-top:4px; display:block; }
+  input.input-error{ border-color:#fca5a5 !important; outline-color:#fca5a5 !important; }
+
+  /* ======= Pill ======= */
+
+  .pill{
+    display:inline-block;
+    padding:2px 10px;
+    border-radius:999px;
+    font-size:12px;
+    background:#eef2ff;
+    color:#1e40af;
+    border:1px solid #e5e7eb;
+  }
+
+  /* Encabezado de sección con acción a la derecha */
+  .section-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 10px; }
+  .section-head .actions-inline{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  
+  /* Línea de pregunta + botones juntos (no a la derecha) */
+  .qline{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+  .qline .section-title{ margin:0; }
+  .btn-green{ background:#059669; color:#fff; }
+  .btn-green:hover{ background:#047857; }
+  .btn-toggle{ border-radius:999px; padding:6px 12px; height:34px; font-size:14px; }
+  .btn-toggle[aria-pressed="true"]{ box-shadow:0 0 0 2px rgba(0,0,0,.05) inset; filter:saturate(1.1); }
+
+  /* Botón solo-ícono, compacto */
+  .icon-btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:36px;
+    height:36px;
+    border:none;
+    border-radius:999px;
+    background:var(--blue);
+    color:#fff;
+    cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,.1);
+    transition:transform .18s ease, background .18s ease, box-shadow .18s ease;
+  }
+
+  /* Flechita un poco más grande (SVG 20x20) y animación */
+  .icon-btn:hover{
+    background:var(--blue-600);
+    transform:rotate(20deg);
+    box-shadow:0 3px 8px rgba(0,0,0,.18);
+  }
+
+  /* ===== Responsive table -> cards (Mis reservas) ===== */
+  .resp-table{ width:100%; border-collapse:collapse; }
+  .resp-table thead th, .resp-table tbody td{ text-align:center; }  /* sigue centrado en desktop */
+
+  /* Estado como “pill” (modificadores) */
+  .pill--ok{  background:#ecfdf5; color:#065f46; border-color:#d1fae5; }   /* verde suave */
+  .pill--bad{ background:#fef2f2; color:#991b1b; border-color:#fee2e2; }   /* rojo suave */
+  .pill--other{ background:#eef2ff; color:#1e40af; border-color:#e5e7eb; } /* azul suave */
+  
+  /* ======= Responsive ======= */
+  @media (max-width: 1024px){
+    .form-item{ grid-column: span 4; }      /* 3 por fila */
+  }
+  @media (max-width: 820px){
+    .g > *{ flex:1 1 100% !important; min-width:0 !important; max-width:100% !important; }
+    input, select, .btn-blue{ width:100% !important; }
+    .icon-btn{ width:40px; height:40px; }
+    .form-item{ grid-column:1 / -1; }       /* 1 por fila */
+    .form-grid{ gap:10px 10px; }
+
+    /* Botón “Reservar” pegado abajo y siempre visible en móvil */
+    .actions{ position:sticky; bottom:8px; background:#fff; padding-top:6px; z-index:5; }
+    
+    .cards-area{
+      /* cubre el fondo blanco de la .card contenedora */
+      margin-left:-16px;    /* igual al padding de .card */
+      margin-right:-16px;
+      background:var(--bg); /* mismo fondo que la página */
+      padding:4px 16px;     /* repone el padding visual */
+      border-radius:12px;   /* redondeo suave en los bordes visibles */
+    }
+    
+    /* Oculta encabezados y convierte filas en tarjetas */
+    .resp-table thead{ display:none; }
+    .resp-table, .resp-table tbody, .resp-table tr{ display:block; width:100%; }
+
+    /* “Sangría negativa” para que las tarjetas se peguen a los bordes del contenedor */
+    /* Usa el mismo padding que tu .card (16px por defecto) */
+    .resp-table{ 
+      margin-left: -16px;
+      margin-right: -16px;
+    }
+
+    /* Tarjeta */
+    .resp-table tr{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px 14px;
+      margin:12px 0;
+      box-shadow:0 1px 6px rgba(0,0,0,.06);
+    }
+
+    /* Fila (par etiqueta / valor) */
+    .resp-table td{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      padding:6px 0;
+      border-bottom:none;
+      text-align:right;   /* valor a la derecha */
+    }
+
+    /* Etiqueta (viene de data-th) */
+    .resp-table td::before{
+      content: attr(data-th);
+      font-weight:600;
+      color:#374151;
+      text-align:left;
+      opacity:.85;
+    }
+
+    /* Valor más protagónico */
+    .resp-table td .val{
+      font-weight:600;
+      color:#111827;
+      line-height:1.35;
+    }
+
+    /* Ajustes por tipo de dato */
+    .resp-table td[data-th="Hora"] .val{ white-space:nowrap; }     /* evita saltos raros */
+    .resp-table td[data-th="Evento"]{
+      text-align:left; 
+    }
+    .resp-table td[data-th="Evento"] .val{
+      font-weight:500; 
+      color:#1f2937;
+    }
+
+    .resp-table td + td { border-top:1px dashed #eee; }
+  }
+</style>

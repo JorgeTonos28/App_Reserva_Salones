@@ -1,0 +1,188 @@
+<!DOCTYPE html><html>
+<head>
+  <meta charset="utf-8" />
+  <title>Acceso denegado</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <?!= include_('css'); ?>
+  <style>
+    /* Anchos bonitos en desktop */
+    @media (min-width: 1024px){
+      .card--narrow { max-width: 780px; margin: 0 auto; }
+      .cta-inline   { display: inline-block; }
+      /* Evita que .row.g convierta el botón en "full width" */
+      .g--auto > *  { flex: 0 0 auto !important; min-width: 0 !important; }
+    }
+  </style>
+</head>
+<body class="container" style="text-align:center">
+  <header class="card card--narrow header-compact" style="padding-bottom:10px; margin-bottom:15px">
+    <img id="logo" alt="Logo" style="height:100px"/>
+    <h2 style="margin:8px 0 4px">Acceso denegado</h2>
+    <small class="muted">Versión <?= appVersion ?></small>
+  </header>
+
+  <section class="card card--narrow" style="text-align:left">
+    <p style="margin:0 0 8px">
+      Tu cuenta <b><?= user && user.email ? user.email : '(sin correo)' ?></b> no está habilitada para usar el sistema de
+      <b>Reserva de Salones</b> por el momento.
+    </p>
+
+    <? if (isPending) { ?>
+      <div class="card" style="border:1px solid var(--border); box-shadow:none; background:#f9fafb">
+        <p style="margin:0"><b>Solicitud registrada:</b> Tu acceso está en <b>Pendiente</b>. Recibirás un correo cuando sea aprobado.</p>
+      </div>
+    <? } else if (isInactive) { ?>
+      <div class="card" style="border:1px solid var(--border); box-shadow:none; background:#fff3f3">
+        <p style="margin:0"><b>Usuario inactivo:</b> Tu cuenta está marcada como <b>Inactiva</b>. Contacta a la administración para reactivarla.</p>
+      </div>
+    <? } else if (noState) { ?>
+      <div class="card" style="border:1px solid var(--border); box-shadow:none;">
+        <p style="margin:0"><b>Configuración incompleta:</b> Tu cuenta tiene rol, pero <b>no tiene un estado asignado</b>. Por favor, contacta a la administración para corregirlo.</p>
+      </div>
+    <? } else if (noRole) { ?>
+      <div class="card" style="border:1px solid var(--border); box-shadow:none;">
+        <p style="margin:0"><b>Falta de permisos:</b> Tu cuenta está <b>Activa</b> pero no tiene un <b>rol</b> asignado. Por favor, contacta a la administración.</p>
+      </div>
+    <? } else { ?>
+      <!-- Caso “no está en la BD”: permite solicitar acceso -->
+      <div class="row g g--auto" style="justify-content:flex-start; margin-top:8px">
+        <button id="btnSolicitar" class="btn-blue cta-inline" type="button">Solicitar acceso</button>
+      </div>
+    <? } ?>
+
+    <br>
+    <br>
+    <div class="hint" style="margin-top:12px">
+      Si crees que esto es un error, contáctanos:
+    </div>
+    <div class="card" style="box-shadow:none; border:1px solid var(--border); margin-top:8px">
+      <div style="font-size:14px; line-height:1.6">
+        <div><b>Área responsable:</b> <?= contact && contact.name ? contact.name : 'Administración' ?></div>
+        <div><b>Correo:</b>
+          <? if (contact && contact.email) { ?>
+            <a href="mailto:<?= contact.email ?>"><?= contact.email ?></a>
+          <? } else { ?>
+            <span class="muted">No disponible</span>
+          <? } ?>
+        </div>
+        <div><b>Extensión:</b> <?= contact && contact.ext ? contact.ext : '—' ?></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Overlay global -->
+  <div id="overlay" class="overlay" hidden>
+    <div class="spinner"></div>
+    <div class="overlay-msg">Procesando…</div>
+  </div>
+
+  <!-- Modal Solicitud -->
+  <div id="modal" class="overlay" hidden>
+    <div class="modal-card" style="max-width:520px; text-align:left">
+      <h3 style="margin:0 0 10px">Solicitar acceso</h3>
+      <div class="form-grid" style="grid-template-columns:repeat(12,1fr); gap:10px 12px">
+        <div class="form-item form-item--full">
+          <label>Correo</label>
+          <input id="fEmail" value="<?= user && user.email ? user.email : '' ?>" disabled />
+          <small class="muted">Usa tu correo institucional</small>
+        </div>
+        <div class="form-item form-item--full">
+          <label>Nombre</label>
+          <input id="fNombre" placeholder="Tu nombre" value="<?= user && user.nombre ? user.nombre : '' ?>" />
+        </div>
+        <div class="form-item form-item--full">
+          <label>Departamento</label>
+          <input id="fDepto" placeholder="Ej: Comunicaciones" value="<?= user && user.departamento ? user.departamento : '' ?>" />
+        </div>
+        <div class="form-item form-item--full">
+          <label>Extensión</label>
+          <input id="fExt" inputmode="numeric" pattern="[0-9]*" placeholder="Ej: 2239" />
+          <small id="extErr" class="error" hidden>Solo números (0–9).</small>
+        </div>
+      </div>
+      <div class="row g" style="margin-top:12px; justify-content:flex-end">
+        <button id="btnEnviar" class="btn-blue" type="button">Enviar solicitud</button>
+        <button id="btnCerrar" class="btn-blue" type="button">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = s => document.querySelector(s);
+    const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{
+      show(msg){ const o=el(); o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++; },
+      hide(){ const o=el(); n=Math.max(0,n-1); if(!n) o.hidden=true; }
+    };})();
+
+    function modalOpen(){ $('#modal').hidden=false; }
+    function modalClose(){ $('#modal').hidden=true; }
+
+    (function(){
+      var src = "<?= logoUrl ?>";
+      var img = document.getElementById('logo');
+      if (src && img) { img.src = src; }
+      else if (img)   { img.style.display = 'none'; } // 👈 evita el ícono roto
+    })();
+
+    // Solo dígitos para extensión + feedback visual
+    (function(){
+      const ext = $('#fExt'), err = $('#extErr');
+      if (!ext) return;
+      ext.addEventListener('input', e=>{
+        const before = e.target.value;
+        const after = before.replace(/\D+/g,'');
+        const bad = before !== after;
+        if (bad) e.target.value = after;
+        if (err) err.hidden = true;
+      });
+      ext.addEventListener('blur', e=>{
+        const val = (e.target.value||'').trim();
+        if (!/^\d+$/.test(val)) { if (val!=='') err.hidden=false; }
+      });
+    })();
+
+    function successUI(){
+      // oculta botón "Solicitar acceso" y muestra tarjeta de "Pendiente"
+      const btn = $('#btnSolicitar');
+      if (btn) btn.remove();
+      const sec = document.querySelector('section.card');
+      const div = document.createElement('div');
+      div.className='card';
+      div.style.cssText='border:1px solid var(--border); box-shadow:none; background:#f9fafb; margin-top:10px';
+      div.innerHTML = '<p style="margin:0"><b>Solicitud registrada:</b> Tu acceso está en <b>Pendiente</b>. Recibirás un correo cuando sea aprobado.</p>';
+      sec.insertBefore(div, sec.children[1]); // lo inserta justo después del texto principal
+    }
+
+    function enviarSolicitud(){
+      const nombre = ($('#fNombre').value||'').trim();
+      const depto  = ($('#fDepto').value||'').trim();
+      const ext    = ($('#fExt').value||'').trim();
+      if (!nombre || !depto || !/^\d+$/.test(ext)){
+        alert('Completa todos los campos. La extensión debe ser solo dígitos.');
+        return;
+      }
+      Busy.show('Enviando solicitud…');
+      google.script.run
+        .withSuccessHandler(r=>{
+          Busy.hide();
+          if (!r || !r.ok){ alert((r && r.msg) || 'No se pudo registrar la solicitud'); return; }
+          modalClose();
+          alert('¡Solicitud enviada! Quedó en estado Pendiente.');
+          successUI();
+        })
+        .withFailureHandler(e=>{
+          Busy.hide();
+          alert('Error al enviar la solicitud.');
+        })
+        .apiSolicitarAcceso(nombre, depto, ext);
+    }
+
+    document.addEventListener('DOMContentLoaded', ()=>{
+      const b = $('#btnSolicitar');
+      if (b) b.onclick = modalOpen;
+      $('#btnCerrar').onclick = modalClose;
+      $('#btnEnviar').onclick = enviarSolicitud;
+    });
+  </script>
+</body>
+</html>

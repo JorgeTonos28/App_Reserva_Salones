@@ -1,0 +1,830 @@
+<script>
+const $ = s => document.querySelector(s);
+const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
+function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
+
+let __CON_MAP__ = null; // { codigo: {nombre, email, ...} }
+function loadConserjeMap(cb){
+  if (__CON_MAP__) return cb && cb(__CON_MAP__);
+  google.script.run
+    .withSuccessHandler(r=>{
+      const map = {};
+      ((r&&r.data)||[]).forEach(c => { map[c.codigo] = c; });
+      __CON_MAP__ = map;
+      cb && cb(__CON_MAP__);
+    })
+    .withFailureHandler(()=>{ __CON_MAP__ = {}; cb && cb(__CON_MAP__); })
+    .apiListConserjes();
+}
+
+// ---- Fecha helpers ----
+function todayYMD(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+function addDaysYMD(startYmd, days){
+  const [y,m,d] = startYmd.split('-').map(n=>parseInt(n,10));
+  const dt = new Date(y, m-1, d);
+  dt.setDate(dt.getDate() + (Number(days)||0));
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth()+1).padStart(2,'0');
+  const dd2 = String(dt.getDate()).padStart(2,'0');
+  return `${yy}-${mm}-${dd2}`;
+}
+function setDefaultAdminRange(days=30){
+  const f1 = $('#f1'), f2 = $('#f2');
+  const start = todayYMD();
+  const end   = addDaysYMD(start, days);
+  if (f1) f1.value = start;
+  if (f2) f2.value = end;
+  // Evita rango inverso (como en “Mis reservas”)
+  if (f1 && f2){
+    f2.min = f1.value;
+    f1.max = f2.value;
+    f1.onchange = () => { f2.min = f1.value; if (f2.value && f2.value < f1.value) f2.value = f1.value; };
+    f2.onchange = () => { f1.max = f2.value; if (f1.value && f1.value > f2.value) f1.value = f2.value; };
+  }
+}
+
+function drawSalones(arr){
+  const el = $('#salones');
+  if (!arr.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
+  const rows = arr.map(s=>`<tr>
+    <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
+    <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
+    <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
+  </tr>`).join('');
+  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
+}
+function toggleSalon(id, on){ Busy.show('Guardando…'); google.script.run
+  .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ loadSalones(); } else modal(r&&r.msg||'No se pudo actualizar'); })
+  .withFailureHandler(e=>{ Busy.hide(); modal('Error al actualizar'); })
+  .apiToggleSalon(id, on);
+}
+
+function drawReservas(arr){
+  const el = $('#reservas');
+  if (!arr.length){ el.innerHTML='<p>Sin resultados.</p>'; return; }
+  const fmt12 = (hhmm)=>{ if (!/^\d{2}:\d{2}$/.test(hhmm||'')) return hhmm||''; let [h,m]=hhmm.split(':').map(Number); const am=h<12; h=(h%12)||12; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} ${am?'a.m.':'p.m.'}`; };
+  const fmtDateDMY = (ymd)=>{ const [y,m,d]=(ymd||'').split('-'); return (y&&m&&d)? `${d}/${m}/${y}` : (ymd||''); };
+  const now = new Date();
+  const tooLate = (r)=>{ // true si no se permite actuar (pasado o <30min)
+    try{
+      const [hh,mi] = (r.hora_inicio||'00:00').split(':').map(Number);
+      const dt = new Date(r.fecha+'T00:00:00'); dt.setHours(hh||0, mi||0, 0, 0);
+      return now.getTime() > (dt.getTime() - 30*60*1000);
+    }catch(e){ return false; }
+  };
+  const rows = arr.map(r=>{
+    const fecha = fmtDateDMY(r.fecha);
+    const hora  = `${fmt12(r.hora_inicio)} - ${fmt12(r.hora_fin)}`;
+    const estStr = String(r.estado||'').toUpperCase();
+    let estNic = estStr==='APROBADA'?'Aprobada':(estStr==='CANCELADA'?'Cancelada':r.estado||'');
+    let estCls = estStr==='APROBADA'?'pill pill--ok':(estStr==='CANCELADA'?'pill pill--bad':'pill pill--other');
+    const late = tooLate(r);
+    // Columna Conserje (reglas: no habilitar si cancelada o late)
+    let colConserje = '';
+    if (r.conserje_requerido==='SI'){
+      if (estStr==='CANCELADA' || late){
+        // Mostrar nombre si había asignado; si no, vacío
+        if (r.conserje_codigo_asignado){
+          const code = r.conserje_codigo_asignado;
+          const name = (r.conserje_nombre && r.conserje_nombre.trim())
+                      || (__CON_MAP__ && __CON_MAP__[code]?.nombre)
+                      || code;
+          colConserje = `<span>${name}</span>`;
+        } else {
+          colConserje = '';
+        }
+      } else {
+        if (r.conserje_codigo_asignado){
+          const code = r.conserje_codigo_asignado;
+          const name = (r.conserje_nombre && r.conserje_nombre.trim())
+                      || (__CON_MAP__ && __CON_MAP__[code]?.nombre)
+                      || code;
+          colConserje = `<a href="#" class="asignar-link" data-id="${r.id}">${name}</a>`;
+        } else {
+          colConserje = `<a href="#" class="asignar-link" data-id="${r.id}">Asignar</a>`;
+        }
+      }
+    }
+    const cancelar = (estStr==='APROBADA' && !late) ? `<button class="btn-blue" data-id="${r.id}">Cancelar</button>` : '';
+    return `
+      <tr>
+        <td data-th="Fecha"><span class="val">${fecha}</span></td>
+        <td data-th="Hora"><span class="val">${hora}</span></td>
+        <td data-th="Salón"><span class="val">${r.salon_nombre}</span></td>
+        <td data-th="Evento"><span class="val">${r.evento_nombre||''}</span></td>
+        <td data-th="Solicitante"><span class="val">${r.solicitante_nombre} (${r.solicitante_email})</span></td>
+      <td data-th="Estado"><span class="${estCls}">${estNic}</span></td>
+        <td data-th="Conserje"><span class="val">${colConserje}</span></td>
+        <td data-th=""><span class="val">${cancelar}</span></td>
+      </tr>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="cards-area">
+      <table class="resp-table table-center">
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Hora</th><th>Salón</th><th>Evento</th><th>Solicitante</th><th>Estado</th><th>Conserje</th><th></th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  // handlers
+  el.querySelectorAll('button[data-id]').forEach(b=> b.onclick = ()=> cancelarAdmin(b.dataset.id));
+  el.querySelectorAll('a.asignar-link').forEach(a=> a.onclick = (e)=>{ e.preventDefault(); openAsignarModal(a.dataset.id); });
+}
+
+function cancelarAdmin(id){
+  const motivo = prompt('Motivo de cancelación:','Cancelada por administración'); if (motivo===null) return;
+  Busy.show('Cancelando…'); google.script.run
+    .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ buscar(); } else modal(r&&r.msg||'No se pudo cancelar'); })
+    .withFailureHandler(e=>{ Busy.hide(); modal('Error al cancelar'); })
+    .apiCancelarReservaAdmin(id, motivo);
+}
+
+function loadSalones(){ google.script.run
+  .withSuccessHandler(r=>{
+    const data = ((r&&r.data)||[]);
+    drawSalones(data);
+    // === NUEVO: mapa de capacidades para validación local ===
+    window.__SALON_CAPS__ = {};
+    data.forEach(s => { window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0; });
+    // === NUEVO: poblar select del formulario Admin si existe ===
+    const sel = document.getElementById('a-salon');
+    if (sel){
+      const opts = ['<option value="">[Seleccionar]</option>']
+        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
+      sel.innerHTML = opts.join('');
+    }
+    // limpia el tag de cap máx al cargar
+    const tag = document.getElementById('a-capMaxTag');
+    if (tag) tag.textContent = '';
+  })
+  .withFailureHandler(e=> modal('No se pudo cargar salones'))
+  .apiListSalones();
+}
+
+function buscar(){
+  const f1 = $('#f1').value || ''; const f2 = $('#f2').value || '';
+  Busy.show('Buscando…'); google.script.run
+    .withSuccessHandler(r=>{ Busy.hide(); drawReservas((r&&r.data)||[]); })
+    .withFailureHandler(e=>{ Busy.hide(); modal('No se pudo cargar reservas'); })
+    .apiListReservasAdmin(f1, f2);
+}
+
+function init(){
+  Busy.reset();
+  try{
+    $('#logo').src = (window.__LOGO_URL__ || '');
+  }catch(e){/* noop */}
+
+  loadSalones();
+  setDefaultAdminRange(30);
+  loadConserjeMap(()=> buscar());
+  $('#btnBuscar').onclick = buscar;
+  $('#btnConserjes').onclick = openConserjesModal;
+
+  // === Listeners de validación de capacidad en el formulario Admin ===
+  const aSalon = document.getElementById('a-salon');
+  const aCant  = document.getElementById('a-cant');
+  if (aSalon){
+    aSalon.addEventListener('change', ()=>{
+      // actualiza tag y revalida
+      const cap = (window.__SALON_CAPS__||{})[aSalon.value||''] || 0;
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag) tag.textContent = cap ? `(máx ${cap})` : '';
+      if (aCant){
+        const n = Number(aCant.value||0);
+        const bad = cap && n>cap;
+        let capErr = document.getElementById('a-cantError');
+        if (!capErr){
+          capErr = document.createElement('small');
+          capErr.id = 'a-cantError';
+          capErr.className = 'error';
+          aCant.insertAdjacentElement ? aCant.insertAdjacentElement('afterend', capErr) : aCant.parentNode.appendChild(capErr);
+        }
+        capErr.hidden = !bad;
+        capErr.textContent = bad ? `La cantidad ingresada excede la capacidad máxima (${cap}).` : '';
+        aCant.classList.toggle('input-error', bad);
+      }
+    });
+  }
+  if (aCant){
+    aCant.addEventListener('input', ()=>{
+      const cap = (window.__SALON_CAPS__||{})[(aSalon&&aSalon.value)||''] || 0;
+      const n = Number(aCant.value||0);
+      const bad = cap && n>cap;
+      let capErr = document.getElementById('a-cantError');
+      if (!capErr){
+        capErr = document.createElement('small');
+        capErr.id = 'a-cantError';
+        capErr.className = 'error';
+        aCant.insertAdjacentElement ? aCant.insertAdjacentElement('afterend', capErr) : aCant.parentNode.appendChild(capErr);
+      }
+      capErr.hidden = !bad;
+      capErr.textContent = bad ? `La cantidad ingresada excede la capacidad máxima (${cap}).` : '';
+      aCant.classList.toggle('input-error', bad);
+    });
+  }
+
+  $('#btnUsuarios').onclick  = openUsuariosModal;
+
+  // ===== Crear reserva (Admin) =====
+  bootCreateAdmin();
+}
+
+// ===== Crear reserva (Admin) =====
+function bootCreateAdmin(){
+  // Toggle anfitrión (default: “Sí” → autollenar con usuario en sesión vía Admin)
+  (function(){
+    const btnYes = document.getElementById('a-hostYes');
+    const btnNo  = document.getElementById('a-hostNo');
+    const fields = {
+      nombre: document.getElementById('a-nombre'),
+      email:  document.getElementById('a-email'),
+      dep:    document.getElementById('a-dep'),
+      ext:    document.getElementById('a-ext'),
+    };
+    // Datos del usuario en sesión expuestos por Admin.html
+    const MEA = (window.__ME__ || {});
+    function fillFromME(){
+      if (fields.nombre) fields.nombre.value = (MEA.nombre||'').trim();
+      if (fields.email)  fields.email.value  = (MEA.email||'').trim();
+      if (fields.dep)    fields.dep.value    = (MEA.departamento||'').trim();
+      if (fields.ext)    fields.ext.value    = (MEA.extension||'');
+    }
+    function clearHost(){
+      Object.values(fields).forEach(el=>{ if (el) el.value=''; });
+      const eHint = document.getElementById('a-emailError'); if (eHint) eHint.hidden = true;
+      const xHint = document.getElementById('a-extError');   if (xHint) xHint.hidden = true;
+    }
+    function setPressed(yes){
+      if (!btnYes || !btnNo) return;
+      btnYes.setAttribute('aria-pressed', yes?'true':'false');
+      btnNo.setAttribute('aria-pressed',  yes?'false':'true');
+    }
+    if (btnYes && btnNo){
+      btnYes.onclick = ()=>{ setPressed(true); fillFromME(); };
+      btnNo.onclick  = ()=>{ setPressed(false); clearHost(); };
+      // Por defecto: Sí → autollenar desde BD
+      setPressed(true);
+      fillFromME();
+    }
+  })();
+
+  // Dominio email en Admin
+  (function(){
+    const email = document.getElementById('a-email');
+    const hint  = document.getElementById('a-emailError');
+    const okDom = (v)=> /@infotep\.gob\.do$/i.test(String(v||'').trim());
+    if (!email || !hint) return;
+    email.addEventListener('blur', ()=>{
+      const v = email.value;
+      hint.hidden = !v || okDom(v);
+    });
+  })();
+
+  // Prepara fecha mínima = hoy
+  const today = new Date(); const y=today.getFullYear(), m=String(today.getMonth()+1).padStart(2,'0'), d=String(today.getDate()).padStart(2,'0');
+  const ymd = `${y}-${m}-${d}`;
+  const $f = $('#a-fecha'); if ($f){ $f.min = ymd; $f.value = ymd; }
+  // Cargar salones
+  google.script.run
+    .withSuccessHandler(r=>{
+      const data = (r&&r.data)||[];
+      const sel = $('#a-salon');
+      sel.innerHTML = ['<option value="">[Seleccionar]</option>'].concat(data.map(s=>`<option value="${s.id}" ${s.habilitado?'':'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`)).join('');
+    })
+    .withFailureHandler(()=>{ /* noop */ })
+    .apiListSalones();
+  // Duraciones desde config (serán inyectadas por servidor en Public; aquí replicamos)
+  renderDurationsFromConfigAdmin();
+  // Eventos
+  $('#a-salon').onchange = scheduleRefreshSlotsAdmin;
+  $('#a-fecha').onchange = scheduleRefreshSlotsAdmin;
+  $('#a-dur').onchange   = scheduleRefreshSlotsAdmin;
+  $('#a-hora').onchange  = verifySelectedSlotAdmin;
+  $('#a-crear').onclick  = crearReservaAdmin;
+
+  // Filtro de extensión (solo números) con hint
+  const ext = $('#a-ext'), extErr = $('#a-extError');
+  if (ext){
+    ext.addEventListener('input', (e)=>{
+      const before = e.target.value;
+      const after  = before.replace(/\D+/g,'');
+      const bad    = before !== after;
+      if (bad) e.target.value = after;
+      if (extErr){
+        extErr.hidden = !(bad && before.length>0);
+        e.target.classList.toggle('input-error', bad);
+      }
+    });
+  }
+  // Capacidad: título dinámico y hint al exceder (sin pedir al server)
+  initSalonCapacityAdmin();
+}
+
+let _admReqSeq = 0;
+function scheduleRefreshSlotsAdmin(){ clearTimeout(window.__admDeb__); window.__admDeb__=setTimeout(refreshSlotsAdmin, 200); }
+
+function refreshSlotsAdmin(){
+  const salon = $('#a-salon').value||'';
+  const fecha = $('#a-fecha').value||'';
+  const dur   = Number($('#a-dur').value||0);
+  if(!salon||!fecha||!dur){
+    $('#a-hora').innerHTML='';
+    // limpia meta y hint si no hay salón/fecha/duración
+    const tag = document.getElementById('a-capMaxTag');
+    if (tag) tag.textContent = '';
+    const capErr = document.getElementById('a-cantError');
+    if (capErr){ capErr.hidden = true; capErr.textContent=''; }
+    $('#a-cant')?.classList.remove('input-error');
+    return;
+  }
+
+  const my = ++_admReqSeq;
+  Busy.show('Verificando disponibilidad…');
+
+  google.script.run
+    .withSuccessHandler(r=>{
+      if (my!==_admReqSeq) return;
+      Busy.hide();
+
+      const arr = (r && r.data) || [];
+
+      // --- Filtrar horas pasadas cuando la fecha es hoy ---
+      const todayYMD = (()=>{
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth()+1).padStart(2,'0');
+        const dd= String(d.getDate()).padStart(2,'0');
+        return `${y}-${m}-${dd}`;
+      })();
+      const isToday = fecha === todayYMD;
+      const now     = new Date();
+      const nowMin  = now.getHours()*60 + now.getMinutes();
+      const toMin   = (hhmm)=>{ const [h,m] = String(hhmm||'').split(':').map(Number); return (h*60)+(m||0); };
+
+      const filtered = arr.filter(s => !isToday || toMin(s.inicio) > nowMin);
+
+      const opts = ['<option value="">[Seleccionar]</option>'].concat(filtered.map(s=>{
+        const puede = !!s.seleccionable;
+        const note  = (!s.disponible && s.maxPrio!=null)
+                      ? (puede ? ' (ocupado – puedes reasignar)' : ' (reservado)')
+                      : '';
+        return `<option value="${s.inicio}" ${puede?'':'disabled'}>${s.inicio} - ${s.fin}${note}</option>`;
+      }));
+
+      $('#a-hora').innerHTML = opts.join('');
+
+      // === Actualizar el tag "(máx N)" en el label
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag){
+        const cap = (window.__SALON_CAPS__||{})[salon] || 0;
+        tag.textContent = cap ? `(máx ${cap})` : '';
+      }
+      // Revalida cantidad actual contra la nueva capacidad
+      const cantEl = document.getElementById('a-cant');
+      if (cantEl){
+        const cap = (window.__SALON_CAPS__||{})[salon] || 0;
+        const n = Number(cantEl.value||0);
+        const bad = cap && n>cap;
+        let capErr = document.getElementById('a-cantError');
+        if (!capErr){
+          capErr = document.createElement('small');
+          capErr.id = 'a-cantError';
+          capErr.className = 'error';
+          cantEl.insertAdjacentElement ? cantEl.insertAdjacentElement('afterend', capErr) : cantEl.parentNode.appendChild(capErr);
+        }
+        capErr.hidden = !bad;
+        capErr.textContent = bad ? `La cantidad ingresada excede la capacidad máxima (${cap}).` : '';
+        cantEl.classList.toggle('input-error', bad);
+      }
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo obtener disponibilidad'); })
+    .apiListDisponibilidad(fecha, salon, dur, 2); // admin sin prioridad => 2 por defecto
+}
+
+function verifySelectedSlotAdmin(){
+  const salon=$('#a-salon').value||''; const fecha=$('#a-fecha').value||''; const dur=Number($('#a-dur').value||0); const ini=$('#a-hora').value||'';
+  if(!salon||!fecha||!dur||!ini) return;
+  Busy.show('Confirmando intervalo…');
+  google.script.run
+    .withSuccessHandler(r=>{ Busy.hide(); if(!r||!r.ok) return; if(!r.disponible && !(2 > (r.maxPrio||0))){ modal('Ese intervalo ya no está disponible.'); $('#a-hora').value=''; scheduleRefreshSlotsAdmin(); } })
+    .withFailureHandler(()=>{ Busy.hide(); })
+    .apiCheckSlot(fecha, salon, ini, dur, 2);
+}
+function crearReservaAdmin(){
+  const p = {
+    salon_id: $('#a-salon').value,
+    fecha: $('#a-fecha').value,
+    hora_inicio: $('#a-hora').value,
+    duracion_min: Number($('#a-dur').value||0),
+    nombre: $('#a-nombre').value.trim(),
+    email: ($('#a-email').value||'').trim(),
+    departamento: $('#a-dep').value.trim(),
+    extension: $('#a-ext').value.trim(),
+    cant_personas: $('#a-cant').value,
+    evento_nombre: $('#a-evento').value.trim(),
+    publico_tipo: $('#a-publico').value
+  };
+  if (!p.salon_id || !p.fecha || !p.hora_inicio || !p.duracion_min || !p.nombre || !p.email || !p.departamento || !p.extension || !p.cant_personas || !p.evento_nombre){
+    return modal('Completa todos los campos obligatorios.');
+  }
+  if (!/@infotep\.gob\.do$/i.test(p.email||'')){
+    const hint = document.getElementById('a-emailError'); if (hint) hint.hidden = false;
+    return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
+  }
+  Busy.show('Creando reserva…');
+  google.script.run
+    .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ modal('Reserva creada.'); buscar(); // refresca listado
+      // reset rápido
+      ['a-salon','a-hora','a-evento','a-nombre','a-email','a-dep','a-ext','a-cant'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.value=''; });
+      const df = document.getElementById('a-fecha'); if(df) df.value = df.min || df.value;
+    } else { modal((r&&r.msg)||'No se pudo crear'); } })
+    .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
+    .apiCrearReserva(p);
+}
+function renderDurationsFromConfigAdmin(){
+  const sel = $('#a-dur');
+  const min  = Number(window.__DUR_MIN__ || 30);
+  const max  = Number(window.__DUR_MAX__ || 240);
+  const step = Number(window.__DUR_STEP__ || 30);
+  const opts = ['<option value="">[Seleccionar]</option>'];
+  for (let d=min; d<=max; d+=step){
+    const label = (d<60)? `${d} minutos` : (d%60===0? `${d/60} ${d===60?'hora':'horas'}` : `${Math.floor(d/60)} horas ${d%60} min`);
+    opts.push(`<option value="${d}">${label}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+}
+
+// ===== Capacidad (Admin) =====
+let __SALON_MAP_ADMIN__ = {}; // { id: {capacidad, nombre} }
+function initSalonCapacityAdmin(){
+  // Construye mapa local de capacidades
+  google.script.run
+    .withSuccessHandler(r=>{
+      const data = (r&&r.data)||[];
+      __SALON_MAP_ADMIN__ = {};
+      data.forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
+      syncCapLabelAdmin();
+      hookCantValidationAdmin();
+    })
+    .withFailureHandler(()=>{ __SALON_MAP_ADMIN__ = {}; syncCapLabelAdmin(); hookCantValidationAdmin(); })
+    .apiListSalones();
+  $('#a-salon').addEventListener('change', syncCapLabelAdmin);
+
+  // También esconder hint al cambiar de salón
+  const err = document.getElementById('a-cantError');
+  if (err) err.hidden = true;
+}
+function maxCapForSalonAdmin(){
+  const id = $('#a-salon').value||'';
+  const rec = __SALON_MAP_ADMIN__[id];
+  return rec && rec.cap ? Number(rec.cap) : 0;
+}
+function syncCapLabelAdmin(){
+  const cap = maxCapForSalonAdmin();
+  const lab = $('#a-cantLabel');
+  if (!lab) return;
+  if (cap>0) lab.textContent = `Cant. de personas (máx ${cap})`;
+  else lab.textContent = 'Cant. de personas';
+}
+function hookCantValidationAdmin(){
+  const cant = $('#a-cant'), err = $('#a-cantError');
+  if (!cant || !err) return;
+  // Al cargar, asegúrate de ocultar el hint
+  err.hidden = true;
+  const check = ()=>{
+    const cap = maxCapForSalonAdmin();
+    const val = Number(cant.value||0);
+    if (!cant.value){ err.hidden = true; return; } // vacío → sin hint
+    if (cap>0 && val>cap){
+      err.textContent = `Excede la capacidad del salón (máx ${cap}).`;
+      err.hidden = false;
+    } else {
+      err.hidden = true;
+    }
+  };
+  cant.addEventListener('input', check);
+  $('#a-salon').addEventListener('change', check);
+  // También: si cambias de salón, resetea valor y label si quieres (opcional)
+  // $('#a-cant').value = '';
+}
+
+// ===== Usuarios (modal) =====
+function openUsuariosModal(){
+  const modal = document.getElementById('modalUsers');
+  const listEl = document.getElementById('users-list');
+  let selected = null; // objeto usuario seleccionado
+  const draw = (items=[])=>{
+    if (!items.length){ listEl.innerHTML = '<p style="padding:10px">No hay usuarios.</p>'; return; }
+    const rows = items.map(u=>`
+      <tr class="u-row" data-email="${u.email}">
+        <td>${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
+        <td>${u.departamento||''}</td>
+        <td><span class="tag">${u.rol||''}</span></td>
+        <td>${Number(u.prioridad||0)}</td>
+        <td>${u.estado||''}</td>
+        <td>${u.extension||''}</td>
+      </tr>
+    `).join('');
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
+    // selección
+    listEl.querySelectorAll('.u-row').forEach(tr=>{
+      tr.onclick = ()=>{
+        const em = tr.dataset.email;
+        if (selected && selected.email===em){
+          selected=null; tr.classList.remove('selected');
+          clearUserForm();
+          return;
+        }
+        listEl.querySelectorAll('.u-row').forEach(x=>x.classList.remove('selected'));
+        tr.classList.add('selected');
+        const row = items.find(x=>x.email===em);
+        selected = row||null;
+        fillUserForm(row);
+      };
+    });
+  };
+  const modalMsg = (s)=>{ window.modal(s); };
+  const clearUserForm = ()=>{
+    ['u-email','u-nombre','u-dep','u-prio','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    const r = document.getElementById('u-rol'); if(r) r.value='';
+    const e = document.getElementById('u-estado'); if(e) e.value='';
+  };
+  const fillUserForm = (u)=>{
+    document.getElementById('u-email').value = u?.email||'';
+    document.getElementById('u-nombre').value = u?.nombre||'';
+    document.getElementById('u-dep').value = u?.departamento||'';
+    document.getElementById('u-rol').value = u?.rol||'';
+    document.getElementById('u-prio').value = Number(u?.prioridad||0);
+    document.getElementById('u-estado').value = u?.estado||'';
+    document.getElementById('u-ext').value = u?.extension||'';
+  };
+  const load = ()=>{
+    Busy.show('Cargando usuarios…');
+    google.script.run
+      .withSuccessHandler(r=>{ Busy.hide(); draw((r&&r.data)||[]); })
+      .withFailureHandler(()=>{ Busy.hide(); modalMsg('No se pudieron cargar usuarios'); })
+      .apiListUsuarios();
+  };
+  document.getElementById('u-save').onclick = ()=>{
+    const payload = {
+      email:    document.getElementById('u-email').value.trim(),
+      nombre:   document.getElementById('u-nombre').value.trim(),
+      departamento: document.getElementById('u-dep').value.trim(),
+      rol:      document.getElementById('u-rol').value.trim(),
+      prioridad:Number(document.getElementById('u-prio').value||0),
+      estado:   document.getElementById('u-estado').value.trim(),
+      extension:document.getElementById('u-ext').value.trim()
+    };
+    if (!payload.email) return modalMsg('Correo es obligatorio.');
+    // Si hay selección y no hay cambios → no-op
+    if (selected &&
+        selected.email===payload.email &&
+        (selected.nombre||'')===payload.nombre &&
+        (selected.departamento||'')===payload.departamento &&
+        (selected.rol||'')===payload.rol &&
+        Number(selected.prioridad||0)===payload.prioridad &&
+        (selected.estado||'')===payload.estado &&
+        (selected.extension||'')===payload.extension){
+      clearUserForm();
+      const rows = listEl.querySelectorAll('.u-row'); rows.forEach(x=>x.classList.remove('selected')); selected=null;
+      return modalMsg('No hay cambios que guardar.');
+    }
+    Busy.show(selected?'Guardando cambios…':'Guardando…');
+    google.script.run
+      .withSuccessHandler(r=>{ Busy.hide(); if(!r||!r.ok){ modalMsg(r&&r.msg||'No se pudo guardar'); return; } 
+        clearUserForm();
+        listEl.querySelectorAll('.u-row').forEach(x=>x.classList.remove('selected')); selected=null;
+        load();
+      })
+      .withFailureHandler(()=>{ Busy.hide(); modalMsg('Error al guardar'); })
+      .apiUpsertUsuario(payload);
+  };
+  document.getElementById('u-close').onclick = ()=> modal.hidden = true;
+  modal.hidden = false;
+  load();
+}
+
+// Lógica modal conserjes y asignar conserjes
+
+function openConserjesModal(){
+  const modalEl = document.getElementById('modalCon');
+  const listEl  = document.getElementById('con-list');
+
+  let selected = null;     // {codigo,nombre,email,telefono,activo} o null
+  let snapshot = {};       // { codigo: conserje }
+
+  const clearForm = ()=>{
+    document.getElementById('con-nombre').value = '';
+    document.getElementById('con-email').value  = '';
+    document.getElementById('con-tel').value    = '';
+  };
+
+  const clearSelection = ()=>{
+    selected = null;
+    listEl.querySelectorAll('.con-row').forEach(x=>x.classList.remove('selected'));
+  };
+
+  const draw = (items=[])=>{
+    if (!items.length){
+      listEl.innerHTML = '<p style="padding:10px">No hay conserjes.</p>';
+      return;
+    }
+
+    const rows = items.map(c => `
+      <tr class="con-row" data-codigo="${c.codigo}">
+        <td style="width:110px"><code>${c.codigo}</code></td>
+        <td>${c.nombre}</td>
+        <td>${c.email}</td>
+        <td>${c.telefono||''}</td>
+        <td>${c.activo?'<span class="tag">Activo</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Inactivo</span>'}</td>
+        <td style="width:120px">${c.activo? `<button class="btn btn-blue btn--sm con-del" data-codigo="${c.codigo}">Desactivar</button>` : ''}</td>
+      </tr>
+    `).join('');
+
+    listEl.innerHTML = `
+      <table>
+        <thead><tr><th>Código</th><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Estado</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+    // Selección + autollenado
+    listEl.querySelectorAll('.con-row').forEach(tr=>{
+      tr.onclick = ()=>{
+        const codigo = tr.dataset.codigo;
+        if (selected && selected.codigo === codigo){
+          // Toggle off
+          tr.classList.remove('selected');
+          clearSelection();
+          clearForm();
+          return;
+        }
+        // Nueva selección
+        listEl.querySelectorAll('.con-row').forEach(x=>x.classList.remove('selected'));
+        tr.classList.add('selected');
+        const row = items.find(x => x.codigo === codigo);
+        selected = row || null;
+        document.getElementById('con-nombre').value = row?.nombre || '';
+        document.getElementById('con-email').value  = row?.email || '';
+        document.getElementById('con-tel').value    = row?.telefono || '';
+      };
+    });
+
+    // Desactivar (lógico)
+    listEl.querySelectorAll('.con-del').forEach(b=>{
+      b.onclick = (ev)=>{
+        ev.stopPropagation();
+        Busy.show('Actualizando…');
+        google.script.run
+          .withSuccessHandler(r=>{
+            Busy.hide();
+            if (!r || !r.ok){ window.modal('No se pudo actualizar'); return; }
+            clearSelection();
+            clearForm();
+            load();
+          })
+          .withFailureHandler(()=>{
+            Busy.hide();
+            window.modal('Error');
+          })
+          .apiDeleteConserje(b.dataset.codigo);
+      };
+    });
+  };
+
+  const load = ()=>{
+    Busy.show('Cargando…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        const data = (r && r.data) || [];
+        snapshot = {};
+        data.forEach(c => { snapshot[c.codigo] = c; });
+        draw(data);
+      })
+      .withFailureHandler(()=>{
+        Busy.hide();
+        window.modal('No se pudo cargar conserjes');
+      })
+      .apiListConserjes();
+  };
+
+  // Guardar = agregar o actualizar (según haya selección)
+  document.getElementById('con-save').onclick = ()=>{
+    const nombre = (document.getElementById('con-nombre').value||'').trim();
+    const email  = (document.getElementById('con-email').value||'').trim().toLowerCase();
+    const tel    = (document.getElementById('con-tel').value||'').trim();
+    if (!nombre || !email) return window.modal('Nombre y correo son obligatorios');
+
+    if (!selected){
+      // Alta
+      Busy.show('Agregando…');
+      google.script.run
+        .withSuccessHandler(r=>{
+          Busy.hide();
+          if (!r || !r.ok){ window.modal('No se pudo agregar'); return; }
+          window.modal('Conserje agregado');
+          clearForm();
+          clearSelection();
+          load();
+        })
+        .withFailureHandler(()=>{
+          Busy.hide();
+          window.modal('Error al agregar');
+        })
+        .apiAddConserje(nombre, email, tel);
+      return;
+    }
+
+    // Edición (dif contra snapshot para escribir solo si cambia)
+    const cur = snapshot[selected.codigo] || {};
+    const fields = {};
+    if ((cur.nombre||'')   !== nombre) fields.nombre   = nombre;
+    if ((cur.email||'').toLowerCase() !== email) fields.email = email;
+    if ((cur.telefono||'') !== tel)     fields.telefono = tel;
+
+    if (Object.keys(fields).length === 0){
+      window.modal('No hay cambios por guardar.');
+      clearForm();
+      clearSelection();
+      return;
+    }
+
+    Busy.show('Guardando cambios…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        if (!r || !r.ok){ window.modal((r && r.msg) || 'No se pudo guardar'); return; }
+        window.modal(r.changed ? 'Cambios guardados' : 'No había cambios por guardar');
+        clearForm();
+        clearSelection();
+        load();
+      })
+      .withFailureHandler(()=>{
+        Busy.hide();
+        window.modal('Error al guardar cambios');
+      })
+      .apiUpdateConserje(selected.codigo, fields);
+  };
+
+  document.getElementById('con-close').onclick = ()=> { modalEl.hidden = true; };
+  modalEl.hidden = false;
+  load();
+}
+
+let asignarReservaId = null;
+
+function openAsignarModal(reservaId){
+  asignarReservaId = reservaId;
+  const modal = document.getElementById('modalAsignar');
+  const sel = document.getElementById('selConserje');
+  sel.innerHTML = '<option value="">[Seleccionar]</option>';
+  Busy.show('Cargando conserjes…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      const data = (r&&r.data)||[];
+      sel.innerHTML = '<option value="">[Seleccionar]</option>' +
+        data.filter(c=>c.activo).map(c=>`<option value="${c.codigo}">${c.nombre} (${c.codigo})</option>`).join('');
+      modal.hidden = false;
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo cargar conserjes'); })
+    .apiListConserjes();
+
+  document.getElementById('btnAsignarOk').onclick = ()=>{
+    const codigo = sel.value || '';
+    if (!codigo) return modal('Selecciona un conserje');
+    Busy.show('Asignando…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        if (!r || !r.ok) { window.modal((r&&r.msg)||'No se pudo asignar'); return; }
+        modal.hidden = true;
+        // 1) Update inline inmediato
+        const link = document.querySelector(`a.asignar-link[data-id="${asignarReservaId}"]`);
+        if (link && r.conserje && r.conserje.nombre){
+          link.textContent = r.conserje.nombre;
+        }
+        // 2) Refrescar fuentes para siguientes renders
+        __CON_MAP__ = null;
+        loadConserjeMap(()=> buscar());
+      })
+      .withFailureHandler(()=>{ Busy.hide(); window.modal('Error al asignar'); })
+      .apiAsignarConserje(asignarReservaId, codigo);
+  };
+  document.getElementById('btnAsignarClose').onclick = ()=>{ modal.hidden = true; };
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>

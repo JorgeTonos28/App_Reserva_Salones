@@ -1,0 +1,734 @@
+<script>
+/* ========= Utils ========= */
+const $ = s => document.querySelector(s);
+const ME = (window.__ME__ || { prioridad: 0, email: '' });
+let __SALONES__ = [];      // cache local de salones (id, nombre, capacidad, habilitado)
+let __extHintTimer__ = 0;  // timer para ocultar hint de extensión tras un intento inválido
+
+/* Overlay */
+const Busy = (()=>{ 
+  let n=0;
+  const el=()=>$('#overlay');
+  function show(msg){
+    const o=el(); if(!o) return;
+    const m=o.querySelector('.overlay-msg'); if (m) m.textContent = msg||'Procesando…';
+    o.hidden=false; n++;
+  }
+  function hide(){
+    const o=el(); if(!o) return;
+    n=Math.max(0,n-1);
+    if(!n) o.hidden=true;
+  }
+  function reset(){ const o=el(); if(!o) return; n=0; o.hidden=true; }
+  return { show, hide, reset };
+})();
+
+/* Modal */
+function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
+
+/* Estado para llamadas */
+let debounceTimer = null;
+let reqSeq = 0;
+
+/* Helpers */
+function normalizeRes(r){
+  if (typeof r === 'string') {
+    try{ r = JSON.parse(r); }catch(e){ r = null; }
+  }
+  return r || {};
+}
+
+/* ===== Salones ===== */
+function loadSalones(){
+  Busy.show('Cargando salones…');
+  google.script.run
+    .withSuccessHandler(res => {
+      Busy.hide();
+      res = normalizeRes(res);
+      const data = Array.isArray(res.data) ? res.data : (Array.isArray(res) ? res : []);
+      __SALONES__ = data || [];
+      const sel = $('#selSalon');
+      const opts = ['<option value="">[Seleccionar]</option>']
+        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado ? '' : ' (Deshabilitado)'}</option>`));
+      sel.innerHTML = opts.join('');
+      $('#hora').innerHTML = '';
+      $('#hintSalon').textContent = '';
+
+      // Mapa local de capacidades para usar en validaciones/hints sin consultar al servidor
+      window.__SALON_CAPS__ = {};
+      data.forEach(s => { window.__SALON_CAPS__[s.id] = Number(s.capacidad) || 0; });
+
+      // Al cargar, limpia el tag de capacidad
+      const tag = document.getElementById('capMaxTag');
+      if (tag) tag.textContent = '';
+      // Al cargar salones, también renderizamos las opciones de duración desde Config
+      renderDurationsFromConfig();
+
+      $('#selSalon').addEventListener('change', ()=>{
+        const salonId = $('#selSalon').value || '';
+        const hint = $('#hintSalon');
+        const salon = (__SALONES__||[]).find(s => String(s.id) === String(salonId));
+        hint.textContent = salon && Number(salon.capacidad) ? `Capacidad máxima: ${salon.capacidad}` : '';
+      }, { once:false });
+    })
+    .withFailureHandler(() => { Busy.hide(); modal('No se pudieron cargar los salones'); })
+    .apiListSalones();
+}
+
+/* ===== Disponibilidad (con debounce + timeout + cancelación lógica) ===== */
+function scheduleRefreshSlots(){
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(refreshSlots, 200);
+}
+
+function refreshSlots(){
+  const salonId = $('#selSalon').value || '';
+  const fecha   = $('#fecha').value || '';
+  const dur     = Number($('#dur').value || 0);
+  const prio = Number(ME.prioridad) || 0;
+
+  if (!salonId || !fecha || !dur){
+    $('#hora').innerHTML = '';
+    $('#hintSalon').textContent = '';
+    // Sin salón seleccionado, quita meta y error de capacidad si existiera
+    const tag = document.getElementById('capMaxTag');
+    if (tag) tag.textContent = '';
+    const capErr = document.getElementById('cantError');
+    if (capErr){ capErr.hidden = true; capErr.textContent = ''; }
+    $('#cant')?.classList.remove('input-error');
+    Busy.reset();
+    return;
+  }
+
+  const mySeq = ++reqSeq;
+  Busy.show('Verificando disponibilidad…');
+
+  // Timeout de seguridad: si en 8s no volvió, cancelamos visualmente
+  let timeoutId = setTimeout(()=>{
+    if (mySeq === reqSeq){ // sigue siendo la solicitud activa
+      Busy.reset();
+      modal('No se pudo confirmar la disponibilidad (tiempo de espera).');
+    }
+  }, 8000);
+
+  google.script.run
+    .withSuccessHandler(r => {
+      if (mySeq !== reqSeq){ clearTimeout(timeoutId); return; } // llegó tarde
+      Busy.hide();
+      clearTimeout(timeoutId);
+
+      r = normalizeRes(r);
+      const arr = Array.isArray(r.data) ? r.data : (Array.isArray(r) ? r : []);
+      if (!Array.isArray(arr)){
+        $('#hora').innerHTML = '';
+        modal('No se pudo confirmar la disponibilidad.');
+        return;
+      }
+
+      // Filtrar horas pasadas si la fecha es hoy
+      const todayYMD = (()=>{ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;})();
+      const isToday = (fecha === todayYMD);
+      const nowMin  = (new Date()).getHours()*60 + (new Date()).getMinutes();
+      const toMin = (hhmm)=>{ const [h,m]=hhmm.split(':').map(Number); return h*60+m; };
+
+      const first = '<option value="">[Seleccionar]</option>';
+      const opts = arr
+        .filter(s => !isToday || toMin(s.inicio) > nowMin)   // << solo futuros si es hoy
+        .map(s => {
+        const ocupado = !s.disponible;
+        const maxP = (s.maxPrio==null ? null : Number(s.maxPrio));
+        const puede = !!s.seleccionable;
+        let note = '';
+        if (ocupado && maxP!=null){
+          if (!puede) note = ' (reservado)';
+          else note = ' (ocupado – puedes reasignar)';
+        }
+        const label = `${s.inicio} - ${s.fin}${note}`;
+        const disabledAttr = puede ? '' : 'disabled';
+        return `<option value="${s.inicio}" ${disabledAttr}>${label}</option>`;
+      }).join('');
+
+      $('#hora').innerHTML = first + opts;
+      $('#hora').value = ''; // que arranque sin selección
+
+      // DEBUG: imprime lo que vino del server y lo que se pintó
+      try {
+        console.log('[DBG] disponibilidad raw:', arr);
+        const optStats = Array.from($('#hora').options).map(o => ({ text:o.text, value:o.value, disabled:o.disabled }));
+        console.log('[DBG] hora options:', optStats);
+        console.log('[DBG] ME:', ME);
+      } catch(e){}
+
+      const opt = $('#selSalon').selectedOptions[0];
+      $('#hintSalon').textContent = (opt && opt.disabled) ? 'Este salón está deshabilitado temporalmente.' : '';
+
+      // Actualiza el meta inline "(máx N)" en el label
+      const tag = document.getElementById('capMaxTag');
+      if (tag){
+        const cap = (window.__SALON_CAPS__||{})[salonId] || 0;
+        tag.textContent = cap ? `(máx ${cap})` : '';
+      }
+    })
+    .withFailureHandler(() => {
+      if (mySeq !== reqSeq){ clearTimeout(timeoutId); return; }
+      Busy.hide();
+      clearTimeout(timeoutId);
+      modal('No se pudo confirmar la disponibilidad.');
+    })
+    .apiListDisponibilidad(fecha, salonId, dur, ME.prioridad);
+}
+
+function verifySelectedSlot(){
+  const salonId = $('#selSalon').value || '';
+  const fecha   = $('#fecha').value || '';
+  const dur     = Number($('#dur').value || 0);
+  const inicio  = $('#hora').value || '';
+  if (!salonId || !fecha || !dur || !inicio) return;
+
+  // Usuarios con prioridad > 0 pueden seleccionar aunque esté ocupado (no alertar)
+  if (ME.prioridad > 0) return;
+
+  Busy.show('Confirmando intervalo…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      if (!r || r.ok !== true) return;
+      if (!r.disponible){
+        modal('Ese intervalo ya no está disponible. Elige otra hora.');
+        const sel = $('#hora');
+        const opt = sel.querySelector(`option[value="${inicio}"]`);
+        if (opt) opt.disabled = true;
+        sel.value = '';
+        scheduleRefreshSlots();
+      }
+    })
+    .withFailureHandler(()=>{ Busy.hide(); /* silencio */ })
+    .apiCheckSlot(fecha, salonId, inicio, dur, ME.prioridad);
+}
+
+/* ===== Crear reserva ===== */
+function reservar(){
+  const p = {
+    salon_id: $('#selSalon').value,
+    fecha: $('#fecha').value,
+    hora_inicio: $('#hora').value,
+    duracion_min: Number($('#dur').value || 0),
+    nombre: $('#nombre').value.trim(),
+    email: ($('#email').value||'').trim(),
+    departamento: $('#depto').value.trim(),
+    extension: $('#ext').value.trim(),
+    cant_personas: $('#cant').value,
+    evento_nombre: $('#evento').value.trim(),
+    publico_tipo: $('#publico').value
+  };
+  if (!p.salon_id || !p.fecha || !p.hora_inicio || !p.duracion_min ||
+      !p.nombre || !p.email || !p.departamento || !p.extension || !p.cant_personas || !p.evento_nombre){
+    return modal('Completa todos los campos obligatorios.');
+  }
+  // Dominio estricto
+  if (!/@infotep\.gob\.do$/i.test(p.email||'')){
+    const hint = document.getElementById('emailError'); if (hint) hint.hidden = false;
+    return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
+  }
+  // --- Pre-chequeo duro para prioridad 0 ---
+  if (ME.prioridad <= 0){
+    Busy.show('Verificando disponibilidad…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        if (!r || r.ok !== true){
+          return modal('No se pudo confirmar la disponibilidad.');
+        }
+        if (!r.disponible){
+          modal('Ese intervalo ya está reservado. Por favor elige otro.');
+          // Marca el slot como no seleccionable y refresca
+          const sel = $('#hora');
+          const opt = sel.querySelector(`option[value="${p.hora_inicio}"]`);
+          if (opt) opt.disabled = true;
+          sel.value = '';
+          scheduleRefreshSlots();
+          return;
+        }
+        // Disponible: proceder a crear
+        crearReserva_(p);
+      })
+      .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo confirmar la disponibilidad.'); })
+      .apiCheckSlot(p.fecha, p.salon_id, p.hora_inicio, p.duracion_min, ME.prioridad);
+  } else {
+    // Con prioridad > 0: crear directo
+    crearReserva_(p);
+  }
+}
+
+function crearReserva_(p){
+  Busy.show('Creando reserva…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      r = normalizeRes(r);
+      if (r && r.ok){
+        modal('¡Reserva creada! Recibirás un correo de confirmación.');
+        resetReservaForm();      // 👈 limpiar formulario
+        listar();
+        // (opcional) no refrescar slots si ya reseteamos todo; si prefieres, deja esta línea
+      } else {
+        modal((r && r.msg) || 'No se pudo crear la reserva');
+        // Si falló por disponibilidad, refresca para que el usuario vea el estado real
+        scheduleRefreshSlots();
+      }
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear la reserva'); })
+    .apiCrearReserva(p);
+}
+
+function resetReservaForm(){
+  // Helpers
+  const todayYMD = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${dd}`;
+  };
+
+  // Selección
+  const selSalon = $('#selSalon');
+  if (selSalon) selSalon.value = '';
+
+  const fecha = $('#fecha');
+  if (fecha) fecha.value = todayYMD();
+
+  const dur = $('#dur');
+  if (dur) dur.value = (dur.querySelector('option')?.value || '30'); // primer option o 30
+
+  const hora = $('#hora');
+  if (hora) hora.innerHTML = '<option value="">[Seleccionar]</option>';
+
+  const hintSalon = $('#hintSalon');
+  if (hintSalon) hintSalon.textContent = '';
+
+  // Datos del solicitante
+  const nombre = $('#nombre');        if (nombre) nombre.value = '';
+  const depto  = $('#depto');         if (depto)  depto.value  = '';
+  const ext    = $('#ext');           if (ext){ ext.value=''; ext.classList.remove('input-error'); }
+  const extErr = $('#extError');      if (extErr) extErr.hidden = true;
+  const cant   = $('#cant');          if (cant)   cant.value   = '';
+
+  // Detalles del evento
+  const evento = $('#evento');        if (evento) evento.value = '';
+  const publico= $('#publico');       if (publico) publico.value = ''; // [Seleccionar]
+
+  // Estado interno de disponibilidad
+  reqSeq = 0;                         // descarta solicitudes en vuelo
+  Busy.reset();
+}
+
+/* ===== Mis reservas ===== */
+function drawMisReservas(arr){
+  const el = $('#misreservas');
+  if (!Array.isArray(arr)){
+    el.innerHTML = '<p>Ocurrió un error al cargar las reservas.</p>';
+    return;
+  }
+  if (!arr.length){
+    el.innerHTML = '<p>No tienes reservas en el rango seleccionado.</p>';
+    return;
+  }
+
+  // Helpers fecha/hora -> Date local
+  const toDateLocal = (ymd, hhmm) => {
+    // ymd: 'YYYY-MM-DD', hhmm: 'HH:mm'
+    const [y,m,d] = String(ymd||'').split('-').map(n=>parseInt(n,10));
+    const [hh,mi] = String(hhmm||'').split(':').map(n=>parseInt(n,10));
+    return new Date(y, (m||1)-1, d||1, hh||0, mi||0, 0, 0);
+  };
+  const now = new Date();
+  const canCancel = (r) => {
+    // Público: permitir cancelación hasta antes de la hora de inicio
+    const start = toDateLocal(r.fecha, r.hora_inicio);
+    return start.getTime() > now.getTime() && String(r.estado||'').toUpperCase()==='APROBADA';
+  };
+
+  const fmtDateDMY = (ymd) => {
+    const [y,m,d] = String(ymd||'').split('-');
+    if (!y||!m||!d) return ymd||'';
+    return `${d}/${m}/${y}`;
+  };
+  const fmt12 = (hhmm) => {
+    if (!/^\d{2}:\d{2}$/.test(hhmm||'')) return hhmm||'';
+    let [h, m] = hhmm.split(':').map(n => parseInt(n,10));
+    const am = h < 12;
+    h = (h % 12) || 12;
+    const hh = String(h).padStart(2,'0');
+    return `${hh}:${String(m).padStart(2,'0')} ${am?'a.m.':'p.m.'}`;
+  };
+
+  const rows = arr.map(r=>{
+    const fecha = fmtDateDMY(r.fecha);
+    const hora  = `${fmt12(r.hora_inicio)} - ${fmt12(r.hora_fin)}`;
+    const cons  = (r.conserje_nombre && r.conserje_nombre.trim()) ? r.conserje_nombre : 'N/A';
+    const estStr = String(r.estado||'');
+    let estNic = estStr;
+    let estCls = 'pill pill--other';
+    if (estStr.toUpperCase()==='APROBADA'){ estNic='Aprobada'; estCls='pill pill--ok'; }
+    else if (estStr.toUpperCase()==='CANCELADA'){ estNic='Cancelada'; estCls='pill pill--bad'; }
+
+    const actionBtn = canCancel(r)
+      ? `<button class="btn-blue btn--sm btn-cancel" data-token="${r.token}">Cancelar</button>`
+      : '';
+
+    return `
+      <tr>
+        <td data-th="Fecha"><span class="val">${fecha}</span></td>
+        <td data-th="Hora"><span class="val">${hora}</span></td>
+        <td data-th="Salón"><span class="val">${r.salon_nombre}</span></td>
+        <td data-th="Evento"><span class="val">${r.evento_nombre||''}</span></td>
+        <td data-th="Conserje"><span class="val">${cons}</span></td>
+        <td data-th="Estado"><span class="${estCls}">${estNic}</span></td>
+        <td data-th=""><span class="val">${actionBtn}</span></td>
+      </tr>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="cards-area">
+    <table class="resp-table">
+      <thead>
+        <tr>
+          <th>Fecha</th><th>Hora</th><th>Salón</th><th>Evento</th><th>Conserje</th><th>Estado</th><th></th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>`;
+
+  // Wire: cancelar por token con motivo
+  el.querySelectorAll('.btn-cancel').forEach(btn=>{
+    btn.onclick = ()=>{
+      const token = btn.dataset.token || '';
+      if (!token) return;
+      const motivo = prompt('Motivo de cancelación:','');
+      if (motivo===null) return; // canceló el prompt
+      const m = String(motivo||'').trim();
+      if (!m){ return modal('Debes indicar un motivo.'); }
+      Busy.show('Cancelando…');
+      google.script.run
+        .withSuccessHandler(r=>{
+          Busy.hide();
+          if (!r || !r.ok){ return modal((r&&r.msg)||'No se pudo cancelar'); }
+          modal('Reserva cancelada. Se envió un correo de confirmación.');
+          listar(); // refresca tabla
+        })
+        .withFailureHandler(()=>{ Busy.hide(); modal('Error al cancelar'); })
+        .apiCancelarReservaByToken(token, m);
+    };
+  });
+}
+
+function listar(){
+  const f1 = $('#df1').value || '';
+  const f2 = $('#df2').value || '';
+  const email = ME.email || '';
+  Busy.show('Cargando mis reservas…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      try{
+        const res = normalizeRes(r);
+        const arr = (res && Array.isArray(res.data)) ? res.data : [];
+        console.log('[MIS] response:', res);
+        console.log('[MIS] data length:', arr.length);
+        drawMisReservas(arr);
+      }catch(e){
+        console.error('[MIS] parse error:', e, r);
+        drawMisReservas([]); // mostrará mensaje amigable
+      }
+    })
+    .withFailureHandler(e=>{
+      Busy.hide();
+      console.error('[MIS] RPC error:', e);
+      modal('No se pudieron cargar tus reservas');
+      drawMisReservas([]);
+    })
+    .apiListMisReservasByEmail(f1, f2, email);
+}
+
+/* ===== Init ===== */
+function init(){
+  Busy.reset();
+  $('#logo').src = (window.__LOGO_URL__ || '');
+  console.log('[BOOT] ME:', ME);
+
+  const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth()+1;
+  const d = String(today.getDate()).padStart(2,'0');
+  const ym = String(m).padStart(2,'0');
+
+  // ===== Toggle anfitrión (por defecto: “Sí” → autollenar con BD de sesión) =====
+  (function(){
+    const btnYes = document.getElementById('hostYes');
+    const btnNo  = document.getElementById('hostNo');
+    const fields = {
+      nombre: document.getElementById('nombre'),
+      email:  document.getElementById('email'),
+      dep:    document.getElementById('depto'),
+      ext:    document.getElementById('ext'),
+    };
+    function fillFromME(){
+      if (fields.nombre) fields.nombre.value = (ME.nombre||'').trim();
+      if (fields.email)  fields.email.value  = (ME.email||'').trim();
+      if (fields.dep)    fields.dep.value    = (ME.departamento||'').trim();
+      if (fields.ext)    fields.ext.value    = (ME.extension||'');
+    }
+    function clearHost(){
+      Object.values(fields).forEach(el=>{ if (el) el.value=''; });
+      const eHint = document.getElementById('emailError'); if (eHint) eHint.hidden = true;
+      const xHint = document.getElementById('extError');   if (xHint) xHint.hidden = true;
+    }
+    function setPressed(yes){
+      btnYes.setAttribute('aria-pressed', yes?'true':'false');
+      btnNo.setAttribute('aria-pressed',  yes?'false':'true');
+    }
+    if (btnYes && btnNo){
+      btnYes.onclick = ()=>{ setPressed(true); fillFromME(); };
+      btnNo.onclick  = ()=>{ setPressed(false); clearHost(); };
+      // default: sí
+      setPressed(true); fillFromME();
+    }
+  })();
+
+  // ===== Validación de dominio en email (@infotep.gob.do) =====
+  (function(){
+    const email = document.getElementById('email');
+    const hint  = document.getElementById('emailError');
+    const okDom = (v)=> /@infotep\.gob\.do$/i.test(String(v||'').trim());
+    if (!email || !hint) return;
+    email.addEventListener('blur', ()=>{
+      const v = email.value;
+      hint.hidden = !v || okDom(v);
+    });
+  })();
+
+  // ===== Reserva: fecha mínima = hoy (evita fechas pasadas) =====
+  const todayYMD = `${y}-${ym}-${d}`;
+  const $fecha = $('#fecha');
+  if ($fecha){
+    $fecha.min = todayYMD; // bloquea selección anterior a hoy
+    $fecha.value = todayYMD; // valor inicial
+    $fecha.addEventListener('change', ()=>{
+      if ($fecha.value && $fecha.value < $fecha.min){
+        $fecha.value = $fecha.min; // corrige si teclean manualmente una fecha pasada
+      }
+    });
+  }
+
+  // ===== Mis reservas: sincronización de rango =====
+  const $df1 = $('#df1');
+  const $df2 = $('#df2');
+  if ($df1 && $df2){
+    // hoy → hoy + 30 días
+    const addDays = (base, days)=> {
+      const t = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+      t.setDate(t.getDate() + days);
+      const yy = t.getFullYear();
+      const mm = String(t.getMonth()+1).padStart(2,'0');
+      const dd = String(t.getDate()).padStart(2,'0');
+      return `${yy}-${mm}-${dd}`;
+    };
+    const start = `${y}-${ym}-${d}`;
+    const end   = addDays(today, 30);
+    $df1.value = start;
+    $df2.value = end;
+    // límites coherentes
+    const syncRange = ()=>{
+      if ($df1.value){ $df2.min = $df1.value; }
+      if ($df2.value){ $df1.max = $df2.value; }
+    };
+    $df1.addEventListener('change', ()=>{
+      if ($df2.value && $df2.value < $df1.value) $df2.value = $df1.value;
+      syncRange();
+    });
+    $df2.addEventListener('change', ()=>{
+      if ($df1.value && $df1.value > $df2.value) $df1.value = $df2.value;
+      syncRange();
+    });
+    syncRange();
+  }
+
+  loadSalones();
+  listar();
+
+  $('#selSalon').onchange = scheduleRefreshSlots;
+  // También, al cambiar de salón, limpiar/volver a evaluar el error de capacidad
+  $('#selSalon').addEventListener('change', ()=>{
+    const cap = (window.__SALON_CAPS__||{})[$('#selSalon').value||''] || 0;
+    const n = Number(($('#cant').value||''));
+    const bad = cap && n>cap;
+    const capErr = document.getElementById('cantError');
+    if (capErr){
+      capErr.hidden = !bad;
+      capErr.textContent = bad ? `La cantidad ingresada excede la capacidad máxima (${cap}).` : '';
+    }
+    $('#cant').classList.toggle('input-error', bad);
+  });
+  $('#fecha').onchange    = scheduleRefreshSlots;
+  $('#dur').onchange      = scheduleRefreshSlots;
+  $('#btnCrear').onclick  = reservar;
+  $('#btnFiltrar').onclick= listar;
+  $('#hora').onchange     = verifySelectedSlot;
+  $('#cant').addEventListener('input', validateCapacityHint);
+  $('#selSalon').addEventListener('change', validateCapacityHint);
+
+  // Extensión: mostrar hint SOLO cuando el usuario intenta teclear algo no numérico
+  const ext = $('#ext'), extErr = $('#extError');
+
+  // Validación dinámica de capacidad mientras escribe
+  const cant = $('#cant');
+  if (cant){
+    cant.addEventListener('input', ()=>{
+      const salonId = $('#selSalon').value || '';
+      const cap = (window.__SALON_CAPS__||{})[salonId] || 0;
+      const n = Number(cant.value||0);
+      const bad = cap && n>cap;
+      let capErr = document.getElementById('cantError');
+      if (!capErr){
+        // Crea el hint rojo si no existe
+        capErr = document.createElement('small');
+        capErr.id = 'cantError';
+        capErr.className = 'error';
+        cap.insertAdjacentElement ? cant.insertAdjacentElement('afterend', capErr) : cant.parentNode.appendChild(capErr);
+      }
+      capErr.hidden = !bad;
+      capErr.textContent = bad ? `La cantidad ingresada excede la capacidad máxima (${cap}).` : '';
+      cant.classList.toggle('input-error', bad);
+    });
+  }
+
+  if (ext){
+    ext.addEventListener('input', (e)=>{
+      const before = e.target.value;
+      const after  = before.replace(/\D+/g,'');   // dejamos solo dígitos
+      const bad    = before !== after;            // hubo intento de carácter inválido
+      if (bad){
+        e.target.value = after;                   // sanitiza
+        clearTimeout(__extHintTimer__);
+        extErr.hidden = false;                    // muestra hint solo por el intento
+        e.target.classList.add('input-error');
+        __extHintTimer__ = setTimeout(()=>{
+          extErr.hidden = true;                   // oculta automáticamente
+          e.target.classList.remove('input-error');
+        }, 1200);
+      }else{
+        // si el usuario está tecleando números válidos, mantén el hint oculto
+        // y quita la clase de error si estuviera
+        extErr.hidden = true;
+        e.target.classList.remove('input-error');
+      }
+    });
+  }
+
+  const btnRefresh = $('#btnRefreshSlots');
+
+  if (btnRefresh){
+    btnRefresh.onclick = () => {
+      scheduleRefreshSlots();
+    };
+  }
+
+  // Capacidad: ocultar hint si corrigen o cambian salón
+  (function(){
+    const cant = document.getElementById('cant');
+    const err  = document.getElementById('cantError');
+    const sel  = document.getElementById('selSalon');
+    const hide = ()=>{ if (err) err.hidden = true; };
+    if (cant){ cant.addEventListener('input', ()=>{ if (!cant.value) hide(); }); }
+    if (sel){ sel.addEventListener('change', hide); }
+    hide();
+  })();
+
+  const out = s => document.getElementById('dbgOut').textContent = s || '';
+
+  const btnDump  = document.getElementById('btnDump');
+  const btnCheck = document.getElementById('btnCheck');
+
+  if (btnDump){
+    btnDump.onclick = () => {
+      const salonId = $('#selSalon').value || '';
+      const fecha   = $('#fecha').value || '';
+      const dur     = Number($('#dur').value || 0);
+      Busy.show('Dump server…');
+      google.script.run
+        .withSuccessHandler(r => { Busy.hide(); out(JSON.stringify(r, null, 2)); console.log('[DBG] dump:', r); })
+        .withFailureHandler(e => { Busy.hide(); out('Error dump'); })
+        .dbg_AvailabilityDump(fecha, salonId, dur);
+    };
+  }
+  if (btnCheck){
+    btnCheck.onclick = () => {
+      const salonId = $('#selSalon').value || '';
+      const fecha   = $('#fecha').value || '';
+      const dur     = Number($('#dur').value || 0);
+      const inicio  = $('#hora').value || '';
+      Busy.show('Check create…');
+      google.script.run
+        .withSuccessHandler(r => { Busy.hide(); out(JSON.stringify(r, null, 2)); console.log('[DBG] check:', r); })
+        .withFailureHandler(e => { Busy.hide(); out('Error check'); })
+        .dbg_CheckCreate(fecha, salonId, inicio, dur);
+    };
+  }
+}
+document.addEventListener('DOMContentLoaded', init);
+
+/* ===== Duración desde Config ===== */
+function renderDurationsFromConfig(){
+  const sel = $('#dur');
+  const min  = Number(window.__DUR_MIN__ || 30);
+  const max  = Number(window.__DUR_MAX__ || 240);
+  const step = Number(window.__DUR_STEP__ || 30);
+  const opts = ['<option value="">[Seleccionar]</option>'];
+  for (let d=min; d<=max; d+=step){
+    const label = humanizeMinutes(d);
+    opts.push(`<option value="${d}">${label}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+}
+function humanizeMinutes(mins){
+  if (mins < 60) return `${mins} minutos`;
+  const h = Math.floor(mins/60), m = mins % 60;
+  if (m === 0) return `${h} ${h===1?'hora':'horas'}`;
+  return `${h} ${h===1?'hora':'horas'} ${m} min`;
+}
+
+/* ===== Hint de capacidad ===== */
+function validateCapacityHint(){
+  const salonId = $('#selSalon').value || '';
+  const raw     = String($('#cant').value || '').trim();
+  const cant    = Number(raw || 0);
+  const errEl   = $('#cantError');
+  const lblMax  = $('#cantMax');
+  // Actualiza el "(máx X)" en el label cuando exista salón con capacidad
+  const salon = (__SALONES__||[]).find(s => String(s.id) === String(salonId));
+  const cap   = salon && Number(salon.capacidad) ? Number(salon.capacidad) : null;
+  if (lblMax){
+    lblMax.textContent = cap ? `(máx ${cap})` : '';
+  }
+  // Si no hay salón, no hay capacidad; si el campo está vacío, ocultar hint
+  if (!cap || raw === ''){
+    errEl.hidden = true;
+    return;
+  }
+  if (cant > cap){
+    errEl.textContent = `La cantidad ingresada excede la capacidad máxima (${cap}).`;
+    errEl.hidden = false;
+  }else{
+    errEl.hidden = true;
+  }
+}
+
+// Actualiza el "(máx X)" y revalida cada vez que cambie el salón
+$('#selSalon').addEventListener('change', validateCapacityHint);
+
+// Revalida al escribir, cambiar o salir del campo (cubre más navegadores)
+$('#cant').addEventListener('input',  validateCapacityHint);
+$('#cant').addEventListener('change', validateCapacityHint);
+$('#cant').addEventListener('blur',   validateCapacityHint);
+</script>

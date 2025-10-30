@@ -1,0 +1,189 @@
+<!DOCTYPE html><html>
+<head>
+  <meta charset="utf-8" />
+  <title>Reserva de Salones</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>(function(){try{var f=(window.top!==window.self);var s=Math.max(screen.width,screen.height)<=880;if(f&&s){window.top.location.href=window.location.href;}}catch(e){}})();</script>
+  <?!= include_('css'); ?>
+</head>
+<body class="container">
+  <header class="card" style="text-align:center">
+    <img id="logo" alt="Logo" style="height:100px"/>
+    <h1 style="margin:6px 0 0">Reserva de Salones</h1>
+    <small>Versión <?= appVersion ?></small>
+  </header>
+
+  <section class="card" id="userSessionInfo">
+    <div class="row g" style="align-items:center">
+      <div><strong>Nombre:</strong> <?= me && me.nombre ? me.nombre : '(sin nombre)' ?></div>
+      <div><strong>Correo:</strong> <?= me && me.email ? me.email : '(sin correo)' ?></div>
+      <div>
+        <strong>Prioridad:</strong>
+        <span class="pill">
+          <?= (typeof me?.prioridad !== 'undefined') ? me.prioridad : 0 ?>
+        </span>
+        <small class="muted" style="display:block;margin-top:4px">
+          <?= (Number(me?.prioridad||0) > 0) ? 'Puede reservar sobre otras reservas de menor nivel de prioridad.' : 'No puede reservar sobre otras reservas.' ?>
+        </small>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Nueva reserva</h2>
+    <!-- Toggle anfitrión -->
+    <div class="section">
+      <div class="qline">
+        <div class="section-title">¿El anfitrión eres tú?</div>
+        <div class="actions-inline">
+          <button id="hostYes" class="btn btn-green btn-toggle" type="button" aria-pressed="true">Sí</button>
+          <button id="hostNo"  class="btn btn-red  btn-toggle" type="button" aria-pressed="false">No</button>
+        </div>
+      </div>
+    </div>
+    <!-- Sección 1: Selección principal -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Selección</div>
+        <button id="btnRefreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+          <!-- Flecha en SVG para nitidez -->
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M12 5v2.5a.75.75 0 0 0 1.28.53l3.97-3.97a.75.75 0 0 0 0-1.06L13.28-.03A.75.75 0 0 0 12 .5V3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+      <div class="form-grid">
+        <div class="form-item">
+          <label for="fecha">Fecha</label>
+          <input id="fecha" type="date" />
+        </div>
+
+        <div class="form-item">
+          <label for="dur">Duración</label>
+          <select id="dur"></select>
+        </div>
+
+        <div class="form-item">
+          <label for="selSalon">Salón</label>
+          <select id="selSalon"></select>
+          <small id="hintSalon" class="muted"></small>
+        </div>
+
+        <div class="form-item">
+          <label for="hora">Hora</label>
+          <select id="hora"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sección 2: Datos del solicitante -->
+    <div class="section">
+      <div class="section-title">Datos del anfitrión</div>
+      <div class="form-grid">
+        <div class="form-item">
+          <label for="nombre">Nombre</label>
+          <input id="nombre" placeholder="Tu nombre" />
+        </div>
+        <div class="form-item">
+          <label for="email">Correo</label>
+          <input id="email" type="email" placeholder="jperez@infotep.gob.com" />
+          <small id="emailError" class="error" hidden>Debe ser un correo @infotep.gob.do</small>
+        </div>
+        <div class="form-item">
+          <label for="depto">Departamento</label>
+          <input id="depto" placeholder="Ej: Innovación" />
+        </div>
+        <div class="form-item">
+          <label for="ext">Extensión</label>
+          <input id="ext" inputmode="numeric" pattern="[0-9]*" placeholder="Ej: 2239" />
+          <small id="extError" class="error" hidden>Solo números (0–9).</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sección 3: Detalles del evento -->
+    <div class="section">
+      <div class="section-title">Detalles del evento</div>
+      <div class="form-grid">
+        <div class="form-item form-item--full">
+          <label for="evento">Nombre del evento</label>
+          <input id="evento" placeholder="Ej: Reunión de proyecto" />
+        </div>
+        <div class="form-item">
+          <label for="cant">Cant. de personas <span id="capMaxTag" class="label-meta"></span></label>
+          <input id="cant" type="number" min="1" placeholder="Ej: 15" />
+          <small id="cantError" class="error" hidden></small>
+        </div>
+        <div class="form-item">
+          <label for="publico">Tipo de público</label>
+          <select id="publico">
+            <option value="">[Seleccionar]</option>
+            <option value="Interno">Interno</option>
+            <option value="Externo">Externo</option>
+            <option value="Mixto">Mixto</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnCrear" class="btn-blue">Reservar</button>
+    </div>
+  </section>
+  
+  <!-- Debug pannel -->
+  <!-- <section class="card" id="debugPanel">
+    <h2>Debug</h2>
+    <div class="row g">
+      <button id="btnDump" class="btn-blue" type="button">Dump disponibilidad (server)</button>
+      <button id="btnCheck" class="btn-blue" type="button">Check crear (server)</button>
+    </div>
+    <pre id="dbgOut" style="white-space:pre-wrap;background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:8px;max-height:320px;overflow:auto;"></pre>
+  </section>
+  <script>
+    // Muestra el panel si agregas &debug=1 al URL
+    if (location.search.indexOf('debug=1')>=0) {
+      document.getElementById('debugPanel').style.display = '';
+    }
+  </script> -->
+
+  <section class="card">
+    <h2>Mis reservas</h2>
+    <div class="row g">
+      <input id="df1" type="date" />
+      <input id="df2" type="date" />
+      <button id="btnFiltrar" class="btn-blue">Filtrar</button>
+    </div>
+    <div id="misreservas"></div>
+  </section>
+
+  <div id="overlay" class="overlay" hidden>
+    <div class="spinner" role="status" aria-label="Cargando"></div>
+    <div class="overlay-msg" aria-live="polite">Procesando…</div>
+  </div>
+
+  <div id="modal" class="overlay" hidden>
+    <div class="modal-card">
+      <h3 id="mTitle">Mensaje</h3>
+      <p id="mBody"></p>
+      <div class="row g"><button id="mOk" class="btn-blue">Aceptar</button></div>
+    </div>
+  </div>
+  <script>
+    window.__LOGO_URL__     = "<?= logoUrl ?>";
+    window.__DUR_MIN__      = <?= Number(cfg_('DURATION_MIN') || 30) ?>;
+    window.__DUR_MAX__      = <?= Number(cfg_('DURATION_MAX') || 240) ?>;
+    window.__DUR_STEP__     = <?= Number(cfg_('DURATION_STEP') || 30) ?>;
+    window.__HORARIO_INI__  = "<?= horarioInicio ?>";
+    window.__HORARIO_FIN__  = "<?= horarioFin ?>";
+    window.__ME__           = {
+      email: "<?= me.email ?>",
+      prioridad: <?= Number(me.prioridad||0) ?>,
+      nombre: "<?= me.nombre ?>",
+      departamento: "<?= me.departamento ?>",
+      extension: "<?= me.extension ?>"
+    };
+  </script>
+
+  <?!= include_('public.js'); ?>
+</body></html>
