@@ -106,6 +106,11 @@ function addMinutes_(hhmm, add){
   return toHHMM_(toMin_(hhmm) + Number(add||0));
 }
 
+function isPublicoProtegido_(tipo){
+  const t = String(tipo || '').trim().toLowerCase();
+  return t === 'externo' || t === 'mixto';
+}
+
 // ========= Helpers de formato (para emails) =========
 function fmtDMY_(ymdOrDate){
   // Entrada: 'YYYY-MM-DD' o Date; Salida: 'DD/MM/YYYY'
@@ -407,8 +412,12 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var ini = hhmmFromCell_(r[4]);
         var fin = hhmmFromCell_(r[5]);
         var pr  = Number(r[15]||0);
+        var email = String(r[9]||'');
+        var nombre = String(r[10]||'');
+        var evento = String(r[13]||'');
+        var publico = String(r[14]||'');
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico });
         }
       }
     }
@@ -417,20 +426,36 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     var out = slots.map(function(s){
       var sIni = toMin_(s.inicio), sFin = toMin_(s.fin);
       var maxPrio = -1; // -1 = sin ocupación
+      var conflictos = [];
       for (var j=0; j<ocupados.length; j++){
-        var oIni = toMin_(ocupados[j].ini), oFin = toMin_(ocupados[j].fin);
+        var occ = ocupados[j];
+        var oIni = toMin_(occ.ini), oFin = toMin_(occ.fin);
         if (!(sFin <= oIni || sIni >= oFin)) {
-          maxPrio = Math.max(maxPrio, Number(ocupados[j].prio||0));
+          maxPrio = Math.max(maxPrio, Number(occ.prio||0));
+          conflictos.push(occ);
         }
       }
-      var hayConflicto = maxPrio >= 0;
-      var seleccionable = !hayConflicto || (userPrio > maxPrio);
+      var hayConflicto = conflictos.length > 0;
+      var requiereCoord = conflictos.some(function(c){ return isPublicoProtegido_(c.publico); });
+      var seleccionable = !hayConflicto || (!requiereCoord && userPrio > maxPrio);
       return {
         inicio: s.inicio,
         fin: s.fin,
         disponible: !hayConflicto,
         maxPrio: hayConflicto ? maxPrio : null,
-        seleccionable: seleccionable
+        seleccionable: seleccionable,
+        requiereCoordinacion: requiereCoord,
+        ocupantes: conflictos.map(function(c){
+          return {
+            prioridad: Number(c.prio||0),
+            email: c.email || '',
+            nombre: c.nombre || '',
+            evento: c.evento || '',
+            publico_tipo: c.publico || '',
+            inicio: c.ini,
+            fin: c.fin
+          };
+        })
       };
     });
 
@@ -469,9 +494,10 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
 
     var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin);
     var maxPrio =  conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)), -1);
+    var requiereCoord = conflicts.some(c => isPublicoProtegido_(c.publico_tipo));
     userPrio = Number(userPrio||0);
-    var disponible = (conflicts.length===0) || (userPrio > maxPrio);
-    return { ok:true, disponible, maxPrio: maxPrio>=0?maxPrio:null };
+    var disponible = (conflicts.length===0) || (!requiereCoord && userPrio > maxPrio);
+    return { ok:true, disponible, maxPrio: maxPrio>=0?maxPrio:null, requiereCoordinacion: requiereCoord };
   }catch(e){
     return { ok:false, msg:String(e && e.message || e) };
   }
@@ -534,6 +560,10 @@ function apiCrearReserva(payload){
     }
 
     if (conflicts.length){
+      const protegidas = conflicts.filter(c => isPublicoProtegido_(c.publico_tipo));
+      if (protegidas.length){
+        return { ok:false, msg:'Ese intervalo está reservado para un evento con público externo o mixto. Debes coordinar con la persona responsable o con la administración para cualquier cambio.' };
+      }
       let maxPrio = 0;
       for (let i=0;i<conflicts.length;i++){
         maxPrio = Math.max(maxPrio, Number(conflicts[i].prioridad||0));
@@ -604,8 +634,11 @@ function getConflicts_(fecha, salonId, ini, fin){
     .map(r => ({
       id: r[0],
       prioridad: Number(r[15]||0),
-      solicitante: r[9],
-      evento: r[13],
+      solicitante: String(r[9]||''),
+      solicitante_email: String(r[9]||''),
+      solicitante_nombre: String(r[10]||''),
+      evento: String(r[13]||''),
+      publico_tipo: String(r[14]||''),
       inicio: hhmmFromCell_(r[4]),
       fin: hhmmFromCell_(r[5])
     }));
