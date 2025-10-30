@@ -1,7 +1,28 @@
-/*********************************
- * App – Reserva de Salones (v1)
- *********************************/
 /**
+ * *********************************
+ * App – Reserva de Salones (v1)
+ * *********************************
+ * Proyecto: App – Reserva de Salones (Google Workspace)
+ * Autoría: Jorge Tonos
+ * Cargo: Enc. Centros de Incubación, Dirección de Innovación y Análisis de Datos
+ * Institución/Año: INFOTEP, 2029
+ * Mantenimiento: Equipo de TI interno / colaboradores designados
+ * Descripción:
+ *   Backend principal en Google Apps Script que gestiona el flujo de reservas
+ *   para espacios y salones corporativos. Orquesta la interfaz web (HTML
+ *   incluidos en el proyecto), la lógica de validaciones, la integración con
+ *   Hojas de cálculo y el envío de notificaciones por correo.
+ * Módulos clave:
+ *   - Control de acceso por roles y estados (Usuarios, Admin, Solicitante).
+ *   - Gestión de salones, horarios y disponibilidad mediante la hoja "Reservas".
+ *   - Servicios auxiliares para logos almacenados en Drive y plantillas HTML.
+ * Consideraciones de despliegue:
+ *   - Publicar el Web App como aplicación ejecutándose como propietario y
+ *     accesible solo para los usuarios del dominio deseado.
+ *   - Revisar los permisos OAuth solicitados tras cada ajuste de alcance.
+ * Historial:
+ *   - Versión original Apps Script v1 migrada y extendida sucesivamente.
+ *
  * NOTAS DE CONFIGURACIÓN DEL PROYECTO:
  * 1) Zona horaria del script: definir en File > Project properties > Script properties
  *    -> Time zone = America/Santo_Domingo (evita desfases de fecha/hora).
@@ -12,7 +33,7 @@
  *    Si no se habilita, las funciones getDriveThumbnailBlob_/getLogoDataUrl retornarán vacío (fallback inofensivo).
  *    Recomendado para emails: usar una URL pública HTTPS en Config -> MAIL_LOGO_URL
  *    (evita data-URIs bloqueadas por algunos clientes de correo).
-*/
+ */
 const SS = SpreadsheetApp.getActive();
 const SH_CFG = SS.getSheetByName('Config');
 const SH_USR = SS.getSheetByName('Usuarios');
