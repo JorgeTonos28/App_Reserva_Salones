@@ -4,6 +4,17 @@ const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0, email: '' });
 let __SALONES__ = [];      // cache local de salones (id, nombre, capacidad, habilitado)
 let __extHintTimer__ = 0;  // timer para ocultar hint de extensión tras un intento inválido
+let __SLOT_INFO__ = {};    // cache local de slots con metadata de disponibilidad
+
+function escHtml(str){
+  return String(str || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch] || ch));
+}
 
 /* Overlay */
 const Busy = (()=>{ 
@@ -24,7 +35,56 @@ const Busy = (()=>{
 })();
 
 /* Modal */
-function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
+function modal(msg, title, opts){
+  const modalEl = $('#modal');
+  const body = $('#mBody');
+  const okBtn = $('#mOk');
+  $('#mTitle').textContent = title || 'Aviso';
+  if (body){
+    if (opts && opts.html){
+      body.innerHTML = msg || '';
+    } else {
+      body.textContent = msg || '';
+    }
+  }
+  if (modalEl) modalEl.hidden = false;
+  if (okBtn){
+    okBtn.onclick = () => {
+      if (modalEl) modalEl.hidden = true;
+    };
+  }
+}
+
+function showBlockedSlotMessage(slotInfo){
+  const userPrio = Number(ME.prioridad) || 0;
+  if (!slotInfo || userPrio <= 0) return false;
+  const maxPrio = (slotInfo.maxPrio==null) ? null : Number(slotInfo.maxPrio);
+  if (slotInfo.seleccionable || maxPrio == null || userPrio > maxPrio) return false;
+
+  const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
+  const blocking = ocupantes.filter(o => Number(o.prioridad || 0) >= userPrio);
+  const relevant = blocking.length ? blocking : ocupantes;
+
+  if (relevant.length){
+    const items = relevant.map(o => {
+      const nombre = escHtml(o.nombre || o.email || 'Reservante');
+      const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+      const evento = o.evento ? `<br/><span class="muted">Evento: ${escHtml(o.evento)}</span>` : '';
+      const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
+      const prioridad = escHtml(String(o.prioridad || 0));
+      return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}</li>`;
+    }).join('');
+    const html = `
+      <p>Este horario ya está reservado por otra persona con prioridad igual o mayor.</p>
+      <ul style="padding-left:18px;margin:8px 0;">${items}</ul>
+      <p>Debes coordinar con la(s) persona(s) para que cancelen la reserva antes de poder utilizar este horario.</p>
+    `;
+    modal(html, 'Horario reservado', { html: true });
+  } else {
+    modal('Este horario ya está reservado por otra persona con prioridad igual o mayor. Deben coordinar la cancelación para liberar el espacio.', 'Horario reservado');
+  }
+  return true;
+}
 
 /* Estado para llamadas */
 let debounceTimer = null;
@@ -97,6 +157,8 @@ function refreshSlots(){
     if (capErr){ capErr.hidden = true; capErr.textContent = ''; }
     $('#cant')?.classList.remove('input-error');
     Busy.reset();
+    __SLOT_INFO__ = {};
+    if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
     return;
   }
 
@@ -108,6 +170,8 @@ function refreshSlots(){
     if (mySeq === reqSeq){ // sigue siendo la solicitud activa
       Busy.reset();
       modal('No se pudo confirmar la disponibilidad (tiempo de espera).');
+      __SLOT_INFO__ = {};
+      if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
     }
   }, 8000);
 
@@ -122,6 +186,8 @@ function refreshSlots(){
       if (!Array.isArray(arr)){
         $('#hora').innerHTML = '';
         modal('No se pudo confirmar la disponibilidad.');
+        __SLOT_INFO__ = {};
+        if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
         return;
       }
 
@@ -131,6 +197,10 @@ function refreshSlots(){
       const nowMin  = (new Date()).getHours()*60 + (new Date()).getMinutes();
       const toMin = (hhmm)=>{ const [h,m]=hhmm.split(':').map(Number); return h*60+m; };
 
+      __SLOT_INFO__ = {};
+      arr.forEach(s => { __SLOT_INFO__[s.inicio] = s; });
+      if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
+
       const first = '<option value="">[Seleccionar]</option>';
       const opts = arr
         .filter(s => !isToday || toMin(s.inicio) > nowMin)   // << solo futuros si es hoy
@@ -139,12 +209,19 @@ function refreshSlots(){
         const maxP = (s.maxPrio==null ? null : Number(s.maxPrio));
         const puede = !!s.seleccionable;
         let note = '';
-        if (ocupado && maxP!=null){
-          if (!puede) note = ' (reservado)';
-          else note = ' (ocupado – puedes reasignar)';
+        if (ocupado){
+          if (!puede){
+            if (prio > 0){
+              note = ' (reservado – coordinar)';
+            } else if (maxP!=null) {
+              note = ' (reservado)';
+            }
+          } else {
+            note = ' (ocupado – puedes reasignar)';
+          }
         }
         const label = `${s.inicio} - ${s.fin}${note}`;
-        const disabledAttr = puede ? '' : 'disabled';
+        const disabledAttr = (!puede && prio <= 0) ? 'disabled' : '';
         return `<option value="${s.inicio}" ${disabledAttr}>${label}</option>`;
       }).join('');
 
@@ -174,6 +251,8 @@ function refreshSlots(){
       Busy.hide();
       clearTimeout(timeoutId);
       modal('No se pudo confirmar la disponibilidad.');
+      __SLOT_INFO__ = {};
+      if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
     })
     .apiListDisponibilidad(fecha, salonId, dur, ME.prioridad);
 }
@@ -184,6 +263,12 @@ function verifySelectedSlot(){
   const dur     = Number($('#dur').value || 0);
   const inicio  = $('#hora').value || '';
   if (!salonId || !fecha || !dur || !inicio) return;
+
+  const slotInfo = (__SLOT_INFO__ || {})[inicio];
+  if (showBlockedSlotMessage(slotInfo)){
+    $('#hora').value = '';
+    return;
+  }
 
   // Usuarios con prioridad > 0 pueden seleccionar aunque esté ocupado (no alertar)
   if (ME.prioridad > 0) return;
@@ -229,6 +314,13 @@ function reservar(){
   if (!/@infotep\.gob\.do$/i.test(p.email||'')){
     const hint = document.getElementById('emailError'); if (hint) hint.hidden = false;
     return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
+  }
+  if (ME.prioridad > 0){
+    const slotInfo = (__SLOT_INFO__ || {})[p.hora_inicio];
+    if (showBlockedSlotMessage(slotInfo)){
+      $('#hora').value = '';
+      return;
+    }
   }
   // --- Pre-chequeo duro para prioridad 0 ---
   if (ME.prioridad <= 0){
