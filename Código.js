@@ -407,8 +407,11 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var ini = hhmmFromCell_(r[4]);
         var fin = hhmmFromCell_(r[5]);
         var pr  = Number(r[15]||0);
+        var email = String(r[9]||'');
+        var nombre = String(r[10]||'');
+        var evento = String(r[13]||'');
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento });
         }
       }
     }
@@ -417,20 +420,33 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     var out = slots.map(function(s){
       var sIni = toMin_(s.inicio), sFin = toMin_(s.fin);
       var maxPrio = -1; // -1 = sin ocupación
+      var conflictos = [];
       for (var j=0; j<ocupados.length; j++){
-        var oIni = toMin_(ocupados[j].ini), oFin = toMin_(ocupados[j].fin);
+        var occ = ocupados[j];
+        var oIni = toMin_(occ.ini), oFin = toMin_(occ.fin);
         if (!(sFin <= oIni || sIni >= oFin)) {
-          maxPrio = Math.max(maxPrio, Number(ocupados[j].prio||0));
+          maxPrio = Math.max(maxPrio, Number(occ.prio||0));
+          conflictos.push(occ);
         }
       }
-      var hayConflicto = maxPrio >= 0;
+      var hayConflicto = conflictos.length > 0;
       var seleccionable = !hayConflicto || (userPrio > maxPrio);
       return {
         inicio: s.inicio,
         fin: s.fin,
         disponible: !hayConflicto,
         maxPrio: hayConflicto ? maxPrio : null,
-        seleccionable: seleccionable
+        seleccionable: seleccionable,
+        ocupantes: conflictos.map(function(c){
+          return {
+            prioridad: Number(c.prio||0),
+            email: c.email || '',
+            nombre: c.nombre || '',
+            evento: c.evento || '',
+            inicio: c.ini,
+            fin: c.fin
+          };
+        })
       };
     });
 
@@ -604,8 +620,10 @@ function getConflicts_(fecha, salonId, ini, fin){
     .map(r => ({
       id: r[0],
       prioridad: Number(r[15]||0),
-      solicitante: r[9],
-      evento: r[13],
+      solicitante: String(r[9]||''),
+      solicitante_email: String(r[9]||''),
+      solicitante_nombre: String(r[10]||''),
+      evento: String(r[13]||''),
       inicio: hhmmFromCell_(r[4]),
       fin: hhmmFromCell_(r[5])
     }));
