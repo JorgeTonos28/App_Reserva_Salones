@@ -1,6 +1,11 @@
 /**
+ * *********************************
+ * App – Reserva de Salones (v1)
+ * *********************************
  * Proyecto: App – Reserva de Salones (Google Workspace)
- * Autoría: Usuario solicitante (2024)
+ * Autoría: Jorge Tonos
+ * Cargo: Enc. Centros de Incubación, Dirección de Innovación y Análisis de Datos
+ * Institución/Año: INFOTEP, 2029
  * Mantenimiento: Equipo de TI interno / colaboradores designados
  * Descripción:
  *   Backend principal en Google Apps Script que gestiona el flujo de reservas
@@ -17,11 +22,7 @@
  *   - Revisar los permisos OAuth solicitados tras cada ajuste de alcance.
  * Historial:
  *   - Versión original Apps Script v1 migrada y extendida sucesivamente.
- */
-/*********************************
- * App – Reserva de Salones (v1)
- *********************************/
-/**
+ *
  * NOTAS DE CONFIGURACIÓN DEL PROYECTO:
  * 1) Zona horaria del script: definir en File > Project properties > Script properties
  *    -> Time zone = America/Santo_Domingo (evita desfases de fecha/hora).
@@ -32,7 +33,7 @@
  *    Si no se habilita, las funciones getDriveThumbnailBlob_/getLogoDataUrl retornarán vacío (fallback inofensivo).
  *    Recomendado para emails: usar una URL pública HTTPS en Config -> MAIL_LOGO_URL
  *    (evita data-URIs bloqueadas por algunos clientes de correo).
-*/
+ */
 const SS = SpreadsheetApp.getActive();
 const SH_CFG = SS.getSheetByName('Config');
 const SH_USR = SS.getSheetByName('Usuarios');
