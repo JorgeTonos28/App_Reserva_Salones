@@ -141,6 +141,11 @@ function cfg_(key){
   return r ? String(r[1]).trim() : '';
 }
 
+function isPublicoExternoOMixto_(tipo){
+  const t = String(tipo||'').trim().toUpperCase();
+  return t === 'EXTERNO' || t === 'MIXTO';
+}
+
 // ========= IDs / Hojas =========
 function sh_(name){ const sh=SS.getSheetByName(name); if(!sh) throw new Error("No existe la pestaña '"+name+"'"); return sh; }
 function nextId_(sh, prefix){
@@ -410,8 +415,9 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var email = String(r[9]||'');
         var nombre = String(r[10]||'');
         var evento = String(r[13]||'');
+        var publico = String(r[14]||'');
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico });
         }
       }
     }
@@ -421,6 +427,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
       var sIni = toMin_(s.inicio), sFin = toMin_(s.fin);
       var maxPrio = -1; // -1 = sin ocupación
       var conflictos = [];
+      var requiereConciliacion = false;
+      var motivoConciliacion = '';
       for (var j=0; j<ocupados.length; j++){
         var occ = ocupados[j];
         var oIni = toMin_(occ.ini), oFin = toMin_(occ.fin);
@@ -430,19 +438,33 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         }
       }
       var hayConflicto = conflictos.length > 0;
-      var seleccionable = !hayConflicto || (userPrio > maxPrio);
+      if (hayConflicto){
+        var hayEventoExterno = conflictos.some(function(c){ return isPublicoExternoOMixto_(c.publico); });
+        if (hayEventoExterno){
+          requiereConciliacion = true;
+          motivoConciliacion = 'PUBLICO_EXTERNO';
+        } else if (conflictos.some(function(c){ return Number(c.prio||0) === userPrio; })){ 
+          requiereConciliacion = true;
+          motivoConciliacion = 'MISMA_PRIORIDAD';
+        }
+      }
+      var puedeReasignar = hayConflicto && !requiereConciliacion && (userPrio > maxPrio);
+      var seleccionable = !hayConflicto || puedeReasignar;
       return {
         inicio: s.inicio,
         fin: s.fin,
         disponible: !hayConflicto,
         maxPrio: hayConflicto ? maxPrio : null,
         seleccionable: seleccionable,
+        requiereConciliacion: requiereConciliacion,
+        motivoConciliacion: motivoConciliacion,
         ocupantes: conflictos.map(function(c){
           return {
             prioridad: Number(c.prio||0),
             email: c.email || '',
             nombre: c.nombre || '',
             evento: c.evento || '',
+            publico_tipo: c.publico || '',
             inicio: c.ini,
             fin: c.fin
           };
@@ -485,8 +507,16 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
 
     var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin);
     var maxPrio =  conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)), -1);
+    var hayEventoExterno = conflicts.some(function(c){ return isPublicoExternoOMixto_(c.publico_tipo); });
     userPrio = Number(userPrio||0);
-    var disponible = (conflicts.length===0) || (userPrio > maxPrio);
+    var disponible = (conflicts.length===0);
+    if (!disponible){
+      if (hayEventoExterno){
+        disponible = false;
+      } else if (userPrio > maxPrio){
+        disponible = true;
+      }
+    }
     return { ok:true, disponible, maxPrio: maxPrio>=0?maxPrio:null };
   }catch(e){
     return { ok:false, msg:String(e && e.message || e) };
@@ -550,15 +580,24 @@ function apiCrearReserva(payload){
     }
 
     if (conflicts.length){
+      const tieneEventoExterno = conflicts.some(c => isPublicoExternoOMixto_(c.publico_tipo));
+      if (tieneEventoExterno){
+        return { ok:false, msg:'Ese intervalo está reservado para un evento con público externo o mixto. Deben coordinar con el anfitrión para liberar el espacio.' };
+      }
+      const mismaPrioridad = conflicts.some(c => Number(c.prioridad||0) === prioSolic);
       let maxPrio = 0;
       for (let i=0;i<conflicts.length;i++){
         maxPrio = Math.max(maxPrio, Number(conflicts[i].prioridad||0));
       }
+      if (mismaPrioridad){
+        return { ok:false, msg:'Ese intervalo ya está reservado por otra persona con la misma prioridad. Deben coordinar con la otra parte para que cancele la reserva antes de agendar.' };
+      }
       if (prioSolic <= maxPrio){
         return { ok:false, msg:'Ese intervalo ya está reservado. Elige otra hora.' };
       }
-      // Mi prioridad es mayor: cancelar las inferiores
+      // Mi prioridad es mayor: cancelar las inferiores (solo si no son eventos externos/mixtos)
       for (let j=0;j<conflicts.length;j++){
+        if (isPublicoExternoOMixto_(conflicts[j].publico_tipo)) continue;
         if (prioSolic > Number(conflicts[j].prioridad||0)){
           cancelReservaById_(conflicts[j].id, 'Reasignada por usuario con prioridad', me.email);
         }
@@ -624,6 +663,7 @@ function getConflicts_(fecha, salonId, ini, fin){
       solicitante_email: String(r[9]||''),
       solicitante_nombre: String(r[10]||''),
       evento: String(r[13]||''),
+      publico_tipo: String(r[14]||''),
       inicio: hhmmFromCell_(r[4]),
       fin: hhmmFromCell_(r[5])
     }));

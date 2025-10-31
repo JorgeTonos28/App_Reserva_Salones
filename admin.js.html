@@ -377,9 +377,18 @@ function refreshSlotsAdmin(){
 
       const opts = ['<option value="">[Seleccionar]</option>'].concat(filtered.map(s=>{
         const puede = !!s.seleccionable;
-        const note  = (!s.disponible && s.maxPrio!=null)
-                      ? (puede ? ' (ocupado – puedes reasignar)' : ' (reservado)')
-                      : '';
+        let note = '';
+        if (!s.disponible && s.maxPrio!=null){
+          if (puede){
+            note = ' (ocupado – puedes reasignar)';
+          } else if (s.motivoConciliacion === 'PUBLICO_EXTERNO'){
+            note = ' (evento externo – coordinar)';
+          } else if (s.motivoConciliacion === 'MISMA_PRIORIDAD'){
+            note = ' (reservado – coordinar)';
+          } else {
+            note = ' (reservado)';
+          }
+        }
         return `<option value="${s.inicio}" ${puede?'':'disabled'}>${s.inicio} - ${s.fin}${note}</option>`;
       }));
 
