@@ -2,7 +2,32 @@
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
 const GLOBAL_CFG = window.__GLOBAL_CFG__ || {};
-const ADMIN_ALLOWED = new Set(((window.__ADMIN_ALLOWED_SALONES__||[])||[]).map(code => String(code||'').toUpperCase()));
+
+function normalizeSalonCodeList(value){
+  const seen = {};
+  const out = [];
+  const push = code => {
+    const token = String(code || '').trim().toUpperCase();
+    if (!token || seen[token]) return;
+    seen[token] = true;
+    out.push(token);
+  };
+  if (Array.isArray(value)){
+    value.forEach(push);
+    return out;
+  }
+  if (typeof value === 'string'){
+    value.split(';').forEach(push);
+    return out;
+  }
+  if (value && typeof value === 'object' && typeof value.length === 'number'){
+    Array.prototype.forEach.call(value, push);
+    return out;
+  }
+  return out;
+}
+
+const ADMIN_ALLOWED = new Set(normalizeSalonCodeList(window.__ADMIN_ALLOWED_SALONES__));
 const ADMIN_ALL_ACCESS = !!window.__ADMIN_ALL_ACCESS__;
 const ADMIN_IS_GENERAL = !!window.__ADMIN_IS_GENERAL__;
 
