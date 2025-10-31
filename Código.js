@@ -415,9 +415,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var email = String(r[9]||'');
         var nombre = String(r[10]||'');
         var evento = String(r[13]||'');
-        var publico = String(r[14]||'');
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento });
         }
       }
     }
@@ -436,26 +435,19 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         }
       }
       var hayConflicto = conflictos.length > 0;
-      var tieneProtegida = conflictos.some(function(c){ return isPublicoProtegido_(c.publico); });
-      var mismoNivel = conflictos.some(function(c){ return Number(c.prio||0) === userPrio && userPrio > 0; });
-      var requiereCoord = tieneProtegida || mismoNivel;
-      var motivoCoord = tieneProtegida ? 'publico' : (mismoNivel ? 'misma_prioridad' : '');
-      var seleccionable = !hayConflicto || (!tieneProtegida && !mismoNivel && userPrio > maxPrio);
+      var seleccionable = !hayConflicto || (userPrio > maxPrio);
       return {
         inicio: s.inicio,
         fin: s.fin,
         disponible: !hayConflicto,
         maxPrio: hayConflicto ? maxPrio : null,
         seleccionable: seleccionable,
-        requiereCoordinacion: requiereCoord,
-        motivoCoordinacion: motivoCoord,
         ocupantes: conflictos.map(function(c){
           return {
             prioridad: Number(c.prio||0),
             email: c.email || '',
             nombre: c.nombre || '',
             evento: c.evento || '',
-            publico_tipo: c.publico || '',
             inicio: c.ini,
             fin: c.fin
           };
@@ -651,7 +643,6 @@ function getConflicts_(fecha, salonId, ini, fin){
       solicitante_email: String(r[9]||''),
       solicitante_nombre: String(r[10]||''),
       evento: String(r[13]||''),
-      publico_tipo: String(r[14]||''),
       inicio: hhmmFromCell_(r[4]),
       fin: hhmmFromCell_(r[5])
     }));
