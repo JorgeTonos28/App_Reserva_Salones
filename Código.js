@@ -194,11 +194,11 @@ function findUserByEmail_(email){
     email:r[0],
     nombre:r[1],
     departamento:r[2],
-    rol:(r[3]||'').toUpperCase(),
+    rol:String(r[3]||'').toUpperCase(),
     prioridad:Number(r[4]||0),
     prioridad_salones: parsePrioridadSalones_(prioridadSalonesRaw),
     prioridad_salones_raw: prioridadSalonesRaw,
-    estado:(r[6]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
+    estado:String(r[6]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
     extension:String(r[7]||'')             // NUEVO
   };
 }
