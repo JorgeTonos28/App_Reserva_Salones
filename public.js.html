@@ -16,6 +16,11 @@ function escHtml(str){
   }[ch] || ch));
 }
 
+function isPublicoExternoOMixto(tipo){
+  const t = String(tipo || '').trim().toLowerCase();
+  return t === 'externo' || t === 'mixto';
+}
+
 /* Overlay */
 const Busy = (()=>{ 
   let n=0;
@@ -56,33 +61,46 @@ function modal(msg, title, opts){
 }
 
 function showBlockedSlotMessage(slotInfo){
+  if (!slotInfo) return false;
+
   const userPrio = Number(ME.prioridad) || 0;
-  if (!slotInfo || userPrio <= 0) return false;
-  const maxPrio = (slotInfo.maxPrio==null) ? null : Number(slotInfo.maxPrio);
-  if (slotInfo.seleccionable || maxPrio == null || userPrio > maxPrio) return false;
-
   const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
-  const blocking = ocupantes.filter(o => Number(o.prioridad || 0) >= userPrio);
-  const relevant = blocking.length ? blocking : ocupantes;
+  const motivo = String(slotInfo.motivoConciliacion || '').toUpperCase();
+  const hayEventoExterno = (motivo === 'PUBLICO_EXTERNO') || ocupantes.some(o => isPublicoExternoOMixto(o.publico_tipo));
+  const hayMismaPrioridad = (motivo === 'MISMA_PRIORIDAD') || ocupantes.some(o => Number(o.prioridad || 0) === userPrio);
 
-  if (relevant.length){
-    const items = relevant.map(o => {
-      const nombre = escHtml(o.nombre || o.email || 'Reservante');
-      const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
-      const evento = o.evento ? `<br/><span class="muted">Evento: ${escHtml(o.evento)}</span>` : '';
-      const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
-      const prioridad = escHtml(String(o.prioridad || 0));
-      return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}</li>`;
-    }).join('');
+  if (!hayEventoExterno && !hayMismaPrioridad) return false;
+
+  const items = ocupantes.map(o => {
+    const nombre = escHtml(o.nombre || o.email || 'Reservante');
+    const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+    const evento = o.evento ? `<br/><span class="muted">Evento: ${escHtml(o.evento)}</span>` : '';
+    const publico = o.publico_tipo ? `<br/><span class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</span>` : '';
+    const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
+    const prioridad = escHtml(String(o.prioridad || 0));
+    return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+  }).join('');
+
+  const listaHtml = items ? `<ul style="padding-left:18px;margin:8px 0;">${items}</ul>` : '';
+
+  if (hayEventoExterno){
     const html = `
-      <p>Este horario ya está reservado por otra persona con prioridad igual o mayor.</p>
-      <ul style="padding-left:18px;margin:8px 0;">${items}</ul>
-      <p>Debes coordinar con la(s) persona(s) para que cancelen la reserva antes de poder utilizar este horario.</p>
+      <p>Este horario ya está reservado para un evento con público externo o mixto.</p>
+      ${listaHtml}
+      <p>Debes coordinar con la(s) persona(s) anfitriona(s) antes de realizar cambios.</p>
     `;
     modal(html, 'Horario reservado', { html: true });
-  } else {
-    modal('Este horario ya está reservado por otra persona con prioridad igual o mayor. Deben coordinar la cancelación para liberar el espacio.', 'Horario reservado');
+    return true;
   }
+
+  if (userPrio <= 0) return false;
+
+  const html = `
+    <p>Este horario ya está reservado por otra persona con la misma prioridad.</p>
+    ${listaHtml}
+    <p>Deben conciliar la reserva antes de que puedas utilizar este horario.</p>
+  `;
+  modal(html, 'Horario reservado', { html: true });
   return true;
 }
 
@@ -211,8 +229,12 @@ function refreshSlots(){
         let note = '';
         if (ocupado){
           if (!puede){
-            if (prio > 0){
+            if (s.motivoConciliacion === 'PUBLICO_EXTERNO'){
+              note = ' (evento externo – coordinar)';
+            } else if (s.motivoConciliacion === 'MISMA_PRIORIDAD' && prio > 0){
               note = ' (reservado – coordinar)';
+            } else if (prio > 0){
+              note = ' (reservado)';
             } else if (maxP!=null) {
               note = ' (reservado)';
             }
@@ -315,12 +337,10 @@ function reservar(){
     const hint = document.getElementById('emailError'); if (hint) hint.hidden = false;
     return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
   }
-  if (ME.prioridad > 0){
-    const slotInfo = (__SLOT_INFO__ || {})[p.hora_inicio];
-    if (showBlockedSlotMessage(slotInfo)){
-      $('#hora').value = '';
-      return;
-    }
+  const slotInfo = (__SLOT_INFO__ || {})[p.hora_inicio];
+  if (showBlockedSlotMessage(slotInfo)){
+    $('#hora').value = '';
+    return;
   }
   // --- Pre-chequeo duro para prioridad 0 ---
   if (ME.prioridad <= 0){
