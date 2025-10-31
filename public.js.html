@@ -2,6 +2,35 @@
 /* ========= Utils ========= */
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0, email: '' });
+function getPrioridadSalonesList(){
+  const seen = {};
+  const out = [];
+  const candidates = [];
+  if (Array.isArray(ME.prioridad_salones)) candidates.push(ME.prioridad_salones);
+  if (Array.isArray(ME.prioridadSalones)) candidates.push(ME.prioridadSalones);
+  candidates.forEach(list => {
+    list.forEach(code => {
+      const token = String(code||'').trim().toUpperCase();
+      if (token && !seen[token]){ seen[token]=true; out.push(token); }
+    });
+  });
+  if (!out.length && typeof ME.prioridad_salones_raw === 'string'){
+    String(ME.prioridad_salones_raw||'').split(';').forEach(code => {
+      const token = String(code||'').trim().toUpperCase();
+      if (token && !seen[token]){ seen[token]=true; out.push(token); }
+    });
+  }
+  return out;
+}
+function getEffectivePriorityForSalon(salonId){
+  const base = Number(ME.prioridad) || 0;
+  if (base <= 0) return base;
+  const list = getPrioridadSalonesList();
+  if (!list.length) return base;
+  const target = String(salonId||'').trim().toUpperCase();
+  if (!target) return base;
+  return list.includes(target) ? base : 0;
+}
 let __SALONES__ = [];      // cache local de salones (id, nombre, capacidad, habilitado)
 let __extHintTimer__ = 0;  // timer para ocultar hint de extensión tras un intento inválido
 let __SLOT_INFO__ = {};    // cache local de slots con metadata de disponibilidad
@@ -78,6 +107,39 @@ function applySalonMetaHints(){
   }
 }
 
+function updateSalonHint(){
+  const hint = $('#hintSalon');
+  if (!hint) return;
+  const sel = $('#selSalon');
+  const salonId = sel ? (sel.value || '') : '';
+  if (!salonId){
+    hint.textContent = '';
+    return;
+  }
+  const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+  if (opt && opt.disabled){
+    hint.textContent = 'Este salón está deshabilitado temporalmente.';
+    return;
+  }
+  const salon = (__SALONES__||[]).find(s => String(s.id) === String(salonId));
+  const pieces = [];
+  if (salon && Number(salon.capacidad)){
+    pieces.push(`Capacidad máxima: ${salon.capacidad}`);
+  }
+  const basePrio = Number(ME.prioridad) || 0;
+  if (basePrio > 0){
+    const list = getPrioridadSalonesList();
+    if (!list.length){
+      pieces.push(`Tu prioridad (${basePrio}) está activa en todos los salones.`);
+    } else if (list.includes(String(salonId).trim().toUpperCase())){
+      pieces.push(`Tu prioridad (${basePrio}) está activa para este salón.`);
+    } else {
+      pieces.push('Para este salón tu prioridad se considera 0.');
+    }
+  }
+  hint.textContent = pieces.join(' ');
+}
+
 /* Overlay */
 const Busy = (()=>{ 
   let n=0;
@@ -125,7 +187,9 @@ function showBlockedSlotMessage(slotInfo){
     return true;
   }
 
-  const userPrio = Number(ME.prioridad) || 0;
+  const currentSalonEl = $('#selSalon');
+  const currentSalonId = currentSalonEl ? (currentSalonEl.value || '') : '';
+  const userPrio = getEffectivePriorityForSalon(currentSalonId);
   const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
   const motivo = String(slotInfo.motivoConciliacion || '').toUpperCase();
   const hayEventoExterno = (motivo === 'PUBLICO_EXTERNO') || ocupantes.some(o => isPublicoExternoOMixto(o.publico_tipo));
@@ -197,7 +261,6 @@ function loadSalones(){
         .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado ? '' : ' (Deshabilitado)'}</option>`));
       sel.innerHTML = opts.join('');
       $('#hora').innerHTML = '';
-      $('#hintSalon').textContent = '';
 
       // Mapa local de capacidades para usar en validaciones/hints sin consultar al servidor
       window.__SALON_CAPS__ = {};
@@ -214,12 +277,10 @@ function loadSalones(){
       renderDurationsFromConfig();
 
       $('#selSalon').addEventListener('change', ()=>{
-        const salonId = $('#selSalon').value || '';
-        const hint = $('#hintSalon');
-        const salon = (__SALONES__||[]).find(s => String(s.id) === String(salonId));
-        hint.textContent = salon && Number(salon.capacidad) ? `Capacidad máxima: ${salon.capacidad}` : '';
+        updateSalonHint();
         applySalonMetaHints();
       }, { once:false });
+      updateSalonHint();
       applySalonMetaHints();
     })
     .withFailureHandler(() => { Busy.hide(); modal('No se pudieron cargar los salones'); })
@@ -236,11 +297,11 @@ function refreshSlots(){
   const salonId = $('#selSalon').value || '';
   const fecha   = $('#fecha').value || '';
   const dur     = Number($('#dur').value || 0);
-  const prio = Number(ME.prioridad) || 0;
+  const prio = getEffectivePriorityForSalon(salonId);
 
   if (!salonId || !fecha || !dur){
     $('#hora').innerHTML = '';
-    $('#hintSalon').textContent = '';
+    updateSalonHint();
     // Sin salón seleccionado, quita meta y error de capacidad si existiera
     const tag = document.getElementById('capMaxTag');
     if (tag) tag.textContent = '';
@@ -338,16 +399,7 @@ function refreshSlots(){
         console.log('[DBG] ME:', ME);
       } catch(e){}
 
-      const hintSalon = $('#hintSalon');
-      if (hintSalon){
-        const opt = $('#selSalon').selectedOptions[0];
-        if (opt && opt.disabled){
-          hintSalon.textContent = 'Este salón está deshabilitado temporalmente.';
-        } else {
-          const salon = (__SALONES__||[]).find(s => String(s.id) === String(salonId));
-          hintSalon.textContent = salon && Number(salon.capacidad) ? `Capacidad máxima: ${salon.capacidad}` : '';
-        }
-      }
+      updateSalonHint();
       applySalonMetaHints();
 
       // Actualiza el meta inline "(máx N)" en el label
@@ -365,7 +417,7 @@ function refreshSlots(){
       __SLOT_INFO__ = {};
       if (typeof window !== 'undefined'){ window.__SLOT_INFO__ = __SLOT_INFO__; }
     })
-    .apiListDisponibilidad(fecha, salonId, dur, ME.prioridad);
+    .apiListDisponibilidad(fecha, salonId, dur, getEffectivePriorityForSalon(salonId));
 }
 
 function verifySelectedSlot(){
@@ -381,8 +433,8 @@ function verifySelectedSlot(){
     return;
   }
 
-  // Usuarios con prioridad > 0 pueden seleccionar aunque esté ocupado (no alertar)
-  if (ME.prioridad > 0) return;
+  // Usuarios con prioridad efectiva > 0 pueden seleccionar aunque esté ocupado (no alertar)
+  if (getEffectivePriorityForSalon(salonId) > 0) return;
 
   Busy.show('Confirmando intervalo…');
   google.script.run
@@ -404,7 +456,7 @@ function verifySelectedSlot(){
       }
     })
     .withFailureHandler(()=>{ Busy.hide(); /* silencio */ })
-    .apiCheckSlot(fecha, salonId, inicio, dur, ME.prioridad);
+    .apiCheckSlot(fecha, salonId, inicio, dur, getEffectivePriorityForSalon(salonId));
 }
 
 /* ===== Crear reserva ===== */
@@ -437,7 +489,8 @@ function reservar(){
     return;
   }
   // --- Pre-chequeo duro para prioridad 0 ---
-  if (ME.prioridad <= 0){
+  const prioSalon = getEffectivePriorityForSalon(p.salon_id);
+  if (prioSalon <= 0){
     Busy.show('Verificando disponibilidad…');
     google.script.run
       .withSuccessHandler(r=>{
@@ -459,7 +512,7 @@ function reservar(){
         crearReserva_(p);
       })
       .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo confirmar la disponibilidad.'); })
-      .apiCheckSlot(p.fecha, p.salon_id, p.hora_inicio, p.duracion_min, ME.prioridad);
+      .apiCheckSlot(p.fecha, p.salon_id, p.hora_inicio, p.duracion_min, prioSalon);
   } else {
     // Con prioridad > 0: crear directo
     crearReserva_(p);
@@ -515,8 +568,7 @@ function resetReservaForm(){
   const hora = $('#hora');
   if (hora) hora.innerHTML = '<option value="">[Seleccionar]</option>';
 
-  const hintSalon = $('#hintSalon');
-  if (hintSalon) hintSalon.textContent = '';
+  updateSalonHint();
   const restrHint = document.getElementById('hintRestriccion');
   if (restrHint){ restrHint.hidden = true; restrHint.textContent = ''; }
   const apprHint = document.getElementById('hintAprobacion');

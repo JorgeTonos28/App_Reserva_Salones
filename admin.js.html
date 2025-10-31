@@ -1,5 +1,35 @@
 <script>
 const $ = s => document.querySelector(s);
+const ME = (window.__ME__ || { prioridad: 0 });
+function getPrioridadSalonesAdmin(){
+  const seen = {};
+  const out = [];
+  const candidates = [];
+  if (Array.isArray(ME.prioridad_salones)) candidates.push(ME.prioridad_salones);
+  if (Array.isArray(ME.prioridadSalones)) candidates.push(ME.prioridadSalones);
+  candidates.forEach(list => {
+    list.forEach(code => {
+      const token = String(code||'').trim().toUpperCase();
+      if (token && !seen[token]){ seen[token]=true; out.push(token); }
+    });
+  });
+  if (!out.length && typeof ME.prioridad_salones_raw === 'string'){
+    String(ME.prioridad_salones_raw||'').split(';').forEach(code => {
+      const token = String(code||'').trim().toUpperCase();
+      if (token && !seen[token]){ seen[token]=true; out.push(token); }
+    });
+  }
+  return out;
+}
+function getEffectivePriorityForSalonAdmin(salonId){
+  const base = Number(ME.prioridad) || 0;
+  if (base <= 0) return base;
+  const list = getPrioridadSalonesAdmin();
+  if (!list.length) return base;
+  const target = String(salonId||'').trim().toUpperCase();
+  if (!target) return base;
+  return list.includes(target) ? base : 0;
+}
 const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
 function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
 
@@ -528,7 +558,7 @@ function refreshSlotsAdmin(){
       }
     })
     .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo obtener disponibilidad'); })
-    .apiListDisponibilidad(fecha, salon, dur, 2); // admin sin prioridad => 2 por defecto
+    .apiListDisponibilidad(fecha, salon, dur, getEffectivePriorityForSalonAdmin(salon));
 }
 
 function verifySelectedSlotAdmin(){
@@ -551,7 +581,7 @@ function verifySelectedSlotAdmin(){
       }
     })
     .withFailureHandler(()=>{ Busy.hide(); })
-    .apiCheckSlot(fecha, salon, ini, dur, 2);
+    .apiCheckSlot(fecha, salon, ini, dur, getEffectivePriorityForSalonAdmin(salon));
 }
 function crearReservaAdmin(){
   const p = {
@@ -672,11 +702,12 @@ function openUsuariosModal(){
         <td>${u.departamento||''}</td>
         <td><span class="tag">${u.rol||''}</span></td>
         <td>${Number(u.prioridad||0)}</td>
+        <td>${u.prioridad_salones||''}</td>
         <td>${u.estado||''}</td>
         <td>${u.extension||''}</td>
       </tr>
     `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -696,7 +727,7 @@ function openUsuariosModal(){
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
   };
@@ -706,6 +737,7 @@ function openUsuariosModal(){
     document.getElementById('u-dep').value = u?.departamento||'';
     document.getElementById('u-rol').value = u?.rol||'';
     document.getElementById('u-prio').value = Number(u?.prioridad||0);
+    document.getElementById('u-prio-salones').value = u?.prioridad_salones||'';
     document.getElementById('u-estado').value = u?.estado||'';
     document.getElementById('u-ext').value = u?.extension||'';
   };
@@ -723,6 +755,7 @@ function openUsuariosModal(){
       departamento: document.getElementById('u-dep').value.trim(),
       rol:      document.getElementById('u-rol').value.trim(),
       prioridad:Number(document.getElementById('u-prio').value||0),
+      prioridad_salones: document.getElementById('u-prio-salones').value.trim(),
       estado:   document.getElementById('u-estado').value.trim(),
       extension:document.getElementById('u-ext').value.trim()
     };
@@ -734,6 +767,7 @@ function openUsuariosModal(){
         (selected.departamento||'')===payload.departamento &&
         (selected.rol||'')===payload.rol &&
         Number(selected.prioridad||0)===payload.prioridad &&
+        (String(selected.prioridad_salones||'').trim()===payload.prioridad_salones) &&
         (selected.estado||'')===payload.estado &&
         (selected.extension||'')===payload.extension){
       clearUserForm();

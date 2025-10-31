@@ -23,7 +23,16 @@
           <?= (typeof me?.prioridad !== 'undefined') ? me.prioridad : 0 ?>
         </span>
         <small class="muted" style="display:block;margin-top:4px">
-          <?= (Number(me?.prioridad||0) > 0) ? 'Puede reservar sobre otras reservas de menor nivel de prioridad.' : 'No puede reservar sobre otras reservas.' ?>
+          <? var _prioVal = Number(me?.prioridad||0); var _prioSalones = (me?.prioridad_salones && me.prioridad_salones.length) ? me.prioridad_salones : []; ?>
+          <? if (_prioVal > 0) { ?>
+            <? if (_prioSalones.length) { ?>
+              Puede reservar sobre otras reservas de menor prioridad solo en los salones: <?= _prioSalones.join(', ') ?>. En los demás salones su prioridad se considera 0.
+            <? } else { ?>
+              Puede reservar sobre otras reservas de menor nivel de prioridad.
+            <? } ?>
+          <? } else { ?>
+            No puede reservar sobre otras reservas.
+          <? } ?>
         </small>
       </div>
     </div>
@@ -183,7 +192,10 @@
       prioridad: <?= Number(me.prioridad||0) ?>,
       nombre: "<?= me.nombre ?>",
       departamento: "<?= me.departamento ?>",
-      extension: "<?= me.extension ?>"
+      extension: "<?= me.extension ?>",
+      prioridad_salones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
+      prioridadSalones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
+      prioridad_salones_raw: "<?= me.prioridad_salones_raw || '' ?>"
     };
   </script>
 

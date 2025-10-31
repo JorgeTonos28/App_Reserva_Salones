@@ -19,6 +19,8 @@ distribuir la experiencia a diferentes perfiles.
 - **Notificaciones por correo** en cada transición relevante de la reserva.
 - **Integración con Google Drive** para incrustar el logotipo institucional en
   correos e interfaces.
+- **Prioridades condicionadas por salón**, permitiendo que ciertos usuarios
+  solo tengan ventaja en los espacios explícitamente asignados en su ficha.
 
 ## Estructura del repositorio
 
@@ -54,7 +56,11 @@ distribuir la experiencia a diferentes perfiles.
    `DURATION_STEP`, etc.).
 3. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
    definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
-   `INACTIVO`) y campos opcionales como `extension`.
+   `INACTIVO`), `prioridad` y el nuevo campo `prioridad_salones`. Este último
+   permite restringir la prioridad a ciertos salones escribiendo sus códigos
+   separados por `;` (ej. `S00004;S00005`). Para los demás espacios la
+   prioridad se tratará como 0. Completa también los campos opcionales como
+   `extension` cuando apliquen.
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
    capacidad, sede y la columna `restriccion`. Este último campo acepta:
    - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
