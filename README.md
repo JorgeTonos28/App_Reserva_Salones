@@ -14,8 +14,8 @@ distribuir la experiencia a diferentes perfiles.
   de creación de reservas y consulta de disponibilidad.
 - **Panel administrativo** con herramientas para revisar solicitudes, aprobar,
   denegar o cancelar reservas existentes.
-- **Gestión de catálogos** de salones, con capacidad, sede y banderas de
-  habilitación.
+- **Gestión de catálogos** de salones, con capacidad, sede, banderas de
+  habilitación y reglas de restricción horaria.
 - **Notificaciones por correo** en cada transición relevante de la reserva.
 - **Integración con Google Drive** para incrustar el logotipo institucional en
   correos e interfaces.
@@ -56,7 +56,11 @@ distribuir la experiencia a diferentes perfiles.
    definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
    `INACTIVO`) y campos opcionales como `extension`.
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
-   capacidad y sede.
+   capacidad, sede y la columna `restriccion`. Este último campo acepta:
+   - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
+     horarios específicos (por ejemplo `11:00-14:00;08:00-09:00`).
+   - El valor `CONFIRM` (o `COFNIRM`) para forzar que las solicitudes entren en
+     estado `PENDIENTE` y requieran aprobación manual.
 5. Verificar la pestaña `Reservas` para asegurar que las columnas coinciden con
    la estructura consumida por el backend (ID, solicitante, fechas, horarios,
    estado, etc.).
@@ -80,6 +84,14 @@ distribuir la experiencia a diferentes perfiles.
   del usuario.【F:Código.js†L27-L134】
 - Los catálogos (`apiListSalones`, etc.) leen datos directamente de cada pestaña
   y devuelven objetos JSON usados por las interfaces HTML.【F:Código.js†L136-L154】
+- Las restricciones de salones se interpretan con `parseSalonRestriction_` y se
+  aplican al consultar disponibilidad (`apiListDisponibilidad`) y al crear
+  reservas (`apiCrearReserva`). Los intervalos bloqueados no aparecen como
+  opciones seleccionables y los salones marcados con `CONFIRM/COFNIRM` generan
+  solicitudes en estado `PENDIENTE`.【F:Código.js†L340-L707】【F:Código.js†L974-L1076】
+- El frontend público y el panel administrativo consumen la metadata de
+  restricción para mostrar avisos, deshabilitar horarios restringidos y permitir
+  la aprobación manual de reservas desde la interfaz.【F:public.js.html†L24-L360】【F:admin.js.html†L20-L219】
 - Las notificaciones por correo se encuentran agrupadas en funciones `notify*`
   dentro del mismo archivo.
 - Para modificar estilos o componentes del frontend, editar los archivos

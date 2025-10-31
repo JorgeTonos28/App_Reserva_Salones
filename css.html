@@ -111,6 +111,11 @@
 
   .muted{ display:block; margin-top:6px; font-size:12px; color:#6b7280; }
 
+  .notice{ margin-top:6px; font-size:13px; padding:10px 12px; border-radius:10px; border:1px solid transparent; background:#f3f4f6; color:#1f2937; }
+  .notice--warning{ background:#fef3c7; border-color:#fcd34d; color:#92400e; }
+  .notice--info{ background:#dbeafe; border-color:#93c5fd; color:#1e3a8a; }
+  .notice[hidden]{ display:none !important; }
+
   /* Secciones visibles dentro de la tarjeta */
   .section{ padding:10px 0 2px; border-top:1px dashed var(--border); margin-top:10px; }
   .section:first-of-type{ border-top:none; margin-top:0; }
@@ -196,6 +201,7 @@
   .pill--ok{  background:#ecfdf5; color:#065f46; border-color:#d1fae5; }   /* verde suave */
   .pill--bad{ background:#fef2f2; color:#991b1b; border-color:#fee2e2; }   /* rojo suave */
   .pill--other{ background:#eef2ff; color:#1e40af; border-color:#e5e7eb; } /* azul suave */
+  .pill--pending{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
   
   /* ======= Responsive ======= */
   @media (max-width: 1024px){
