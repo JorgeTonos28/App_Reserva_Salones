@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.5-2025-10-30';
+const APP_VERSION = 'salones-v9.6-2025-11-04';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -340,8 +340,15 @@ function include_(fn){ return HtmlService.createHtmlOutputFromFile(fn).getConten
 // ========= Salones =========
 function apiListSalones(){
   const lr = SH_SAL.getLastRow();
-  const rows = lr<2? [] : SH_SAL.getRange(2,1,lr-1,5).getValues();
-  const data = rows.map(r=>({ id:r[0], nombre:r[1], capacidad:Number(r[2]||0), habilitado:String(r[3]||'').toUpperCase()==='SI', sede:r[4]||'' }));
+  const rows = lr<2? [] : SH_SAL.getRange(2,1,lr-1,6).getValues();
+  const data = rows.map(r=>({
+    id: r[0],
+    nombre: r[1],
+    capacidad: Number(r[2]||0),
+    habilitado: String(r[3]||'').toUpperCase()==='SI',
+    sede: r[4]||'',
+    restriccion: String(r[5]||'').trim()
+  }));
   return { ok:true, data };
 }
 function apiToggleSalon(salonId, habilitar){
@@ -397,6 +404,12 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     }
     if (!slots.length) return { ok:true, data: [] };
 
+    // --- Restricciones del salón ---
+    const salon = getSalonById_(salonId);
+    const restr = parseSalonRestriction_(salon && salon.restriccion);
+    const restrictedIntervals = restr.intervals || [];
+    const conflictStates = restr.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
+
     // --- Reservas del día/salón ---
     var ocupados = [];
     var sh = SS.getSheetByName('Reservas');
@@ -405,7 +418,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
       var values = sh.getRange(2, 1, lr - 1, lc).getValues();
       for (var i=0; i<values.length; i++){
         var r = values[i];
-        if (String(r[2] || '').toUpperCase() !== 'APROBADA') continue;
+        var estado = String(r[2] || '').toUpperCase();
+        if (conflictStates.indexOf(estado) === -1) continue;
         if (ymdCell_(r[3]) !== String(fechaStr).slice(0,10)) continue;
         if (String(r[6] || '').trim() !== String(salonId).trim()) continue;
 
@@ -417,7 +431,7 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var evento = String(r[13]||'');
         var publico = String(r[14]||'');
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico, estado: estado });
         }
       }
     }
@@ -437,6 +451,7 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
           conflictos.push(occ);
         }
       }
+      var esRestriccion = restrictedIntervals.some(function(it){ return !(sFin <= it.iniMin || sIni >= it.finMin); });
       var hayConflicto = conflictos.length > 0;
       if (hayConflicto){
         var hayEventoExterno = conflictos.some(function(c){ return isPublicoExternoOMixto_(c.publico); });
@@ -449,11 +464,12 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         }
       }
       var puedeReasignar = hayConflicto && !requiereConciliacion && (userPrio > maxPrio);
-      var seleccionable = !hayConflicto || puedeReasignar;
-      return {
+      var seleccionable = (!hayConflicto || puedeReasignar) && !esRestriccion;
+      var disponible = !hayConflicto && !esRestriccion;
+      var info = {
         inicio: s.inicio,
         fin: s.fin,
-        disponible: !hayConflicto,
+        disponible: disponible,
         maxPrio: hayConflicto ? maxPrio : null,
         seleccionable: seleccionable,
         requiereConciliacion: requiereConciliacion,
@@ -466,10 +482,19 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
             evento: c.evento || '',
             publico_tipo: c.publico || '',
             inicio: c.ini,
-            fin: c.fin
+            fin: c.fin,
+            estado: c.estado || ''
           };
         })
       };
+      if (esRestriccion){
+        info.restringido = true;
+        info.motivoRestriccion = 'RESTRICCION';
+      }
+      if (restr.requiresApproval){
+        info.requiereAprobacion = true;
+      }
+      return info;
     });
 
     return { ok:true, data: out };
@@ -505,11 +530,25 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
       return { ok:true, disponible:false };
     }
 
-    var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin);
+    const salon = getSalonById_(salonId);
+    const restr = parseSalonRestriction_(salon && salon.restriccion);
+    const restricted = (restr.intervals||[]).some(function(it){
+      return !(toMin_(horaFin) <= it.iniMin || toMin_(hIni) >= it.finMin);
+    });
+    if (restricted){
+      return { ok:true, disponible:false, motivo:'RESTRICCION', requiereAprobacion: restr.requiresApproval || false };
+    }
+
+    var conflictStates = restr.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
+    var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin, conflictStates);
     var maxPrio =  conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)), -1);
     var hayEventoExterno = conflicts.some(function(c){ return isPublicoExternoOMixto_(c.publico_tipo); });
+    var hayPendiente = conflicts.some(function(c){ return String(c.estado||'').toUpperCase()==='PENDIENTE'; });
     userPrio = Number(userPrio||0);
     var disponible = (conflicts.length===0);
+    if (hayPendiente){
+      disponible = false;
+    }
     if (!disponible){
       if (hayEventoExterno){
         disponible = false;
@@ -517,7 +556,7 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
         disponible = true;
       }
     }
-    return { ok:true, disponible, maxPrio: maxPrio>=0?maxPrio:null };
+    return { ok:true, disponible, maxPrio: maxPrio>=0?maxPrio:null, requiereAprobacion: restr.requiresApproval || false };
   }catch(e){
     return { ok:false, msg:String(e && e.message || e) };
   }
@@ -533,6 +572,7 @@ function apiCrearReserva(payload){
     const sal = getSalonById_(payload.salon_id);
     if (!sal) return {ok:false, msg:'Salón inválido.'};
     if (!sal.habilitado) return {ok:false, msg:'Este salón está deshabilitado temporalmente.'};
+    const restrSalon = parseSalonRestriction_(sal.restriccion);
 
     const cant = Number(payload.cant_personas || 0);
     if (!isFinite(cant) || cant < 1) return {ok:false, msg:'Indica la cantidad de personas (número válido).'};
@@ -565,6 +605,12 @@ function apiCrearReserva(payload){
     if (finMin > toMin_(HFIN)) return { ok:false, msg:'La reserva debe terminar a más tardar a las '+HFIN+'.' };
     if (iniMin > toMin_('19:00')) return { ok:false, msg:'La última hora de inicio permitida es 19:00.' };
 
+    // ---- Restricciones horarias específicas del salón
+    const esRestriccion = (restrSalon.intervals||[]).some(it => !(finMin <= it.iniMin || iniMin >= it.finMin));
+    if (esRestriccion){
+      return { ok:false, msg:'Este salón no permite reservas en el horario seleccionado. Elige otro intervalo.' };
+    }
+
     // ---- Conserje (>= 16:00 cualquiera de los extremos)
     const conserjeReq = (iniMin >= toMin_('16:00') || finMin > toMin_('16:00')) ? 'SI' : 'NO';
 
@@ -572,7 +618,12 @@ function apiCrearReserva(payload){
     // Prioridad del solicitante; si es ADMIN y no tiene prioridad asignada, usar 2 por defecto
     const prioSolic = Number( (me.rol==='ADMIN' && !Number(me.prioridad||0)) ? 2 : (me.prioridad||0) );
 
-    const conflicts = getConflicts_(fecha, sal.id, horaIni, horaFin);
+    const conflictStates = restrSalon.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
+    const conflicts = getConflicts_(fecha, sal.id, horaIni, horaFin, conflictStates);
+    const hayPendiente = conflicts.some(c => String(c.estado||'').toUpperCase()==='PENDIENTE');
+    if (hayPendiente){
+      return { ok:false, msg:'Ya existe una solicitud pendiente para ese horario. Elige otro intervalo.' };
+    }
 
     // 🔒 Cortafuegos explícito: prioridad 0 no puede solapar NUNCA
     if (conflicts.length && prioSolic <= 0){
@@ -597,6 +648,7 @@ function apiCrearReserva(payload){
       }
       // Mi prioridad es mayor: cancelar las inferiores (solo si no son eventos externos/mixtos)
       for (let j=0;j<conflicts.length;j++){
+        if (String(conflicts[j].estado||'').toUpperCase()==='PENDIENTE') continue;
         if (isPublicoExternoOMixto_(conflicts[j].publico_tipo)) continue;
         if (prioSolic > Number(conflicts[j].prioridad||0)){
           cancelReservaById_(conflicts[j].id, 'Reasignada por usuario con prioridad', me.email);
@@ -613,18 +665,25 @@ function apiCrearReserva(payload){
     const emailForm = String(payload.email||'').trim().toLowerCase();
     const emailUso  = emailForm || me.email; // si no manda correo, caemos al de sesión
 
+    const estadoInicial = restrSalon.requiresApproval ? 'PENDIENTE' : 'APROBADA';
+
     SH_RES.appendRow([
-      id, token, 'APROBADA', fecha, horaIni, horaFin, sal.id, sal.nombre,
+      id, token, estadoInicial, fecha, horaIni, horaFin, sal.id, sal.nombre,
       cant, emailUso, (payload.nombre||me.nombre||''), (payload.departamento||me.departamento||''),
       String(payload.extension||''), String(payload.evento_nombre||''), String(payload.publico_tipo||''),
       prioSolic, conserjeReq, 'NO', ts, ts, '', ''
     ]);
 
-    try{ sendEmailConfirmacion_(id); }catch(e){}
-    // Si la reserva requiere conserje, notificar al área de Conserjería
-    try{ notificarConserjeria_(id); }catch(e){}
+    if (restrSalon.requiresApproval){
+      try{ sendEmailPendiente_(id); }catch(e){}
+      try{ notifyAdminReservaPendiente_(id); }catch(e){}
+    } else {
+      try{ sendEmailConfirmacion_(id); }catch(e){}
+      // Si la reserva requiere conserje, notificar al área de Conserjería
+      try{ notificarConserjeria_(id); }catch(e){}
+    }
 
-    return { ok:true, id, token };
+    return { ok:true, id, token, estado: estadoInicial, requiere_aprobacion: restrSalon.requiresApproval };
   }catch(e){
     return { ok:false, msg: String(e && e.message || e) };
   }
@@ -632,13 +691,45 @@ function apiCrearReserva(payload){
 
 function getSalonById_(id){
   const lr = SH_SAL.getLastRow(); if (lr<2) return null;
-  const rows = SH_SAL.getRange(2,1,lr-1,5).getValues();
+  const rows = SH_SAL.getRange(2,1,lr-1,6).getValues();
   const r = rows.find(v=>v[0]===id);
   if (!r) return null;
-  return { id:r[0], nombre:r[1], capacidad:Number(r[2]||0), habilitado:String(r[3]||'').toUpperCase()==='SI', sede:r[4]||'' };
+  return {
+    id: r[0],
+    nombre: r[1],
+    capacidad: Number(r[2]||0),
+    habilitado: String(r[3]||'').toUpperCase()==='SI',
+    sede: r[4]||'',
+    restriccion: String(r[5]||'').trim()
+  };
 }
 
-function getConflicts_(fecha, salonId, ini, fin){
+function parseSalonRestriction_(raw){
+  const text = String(raw||'').trim();
+  if (!text) return { raw:'', requiresApproval:false, intervals:[] };
+  const parts = text.split(';').map(s=>String(s||'').trim()).filter(Boolean);
+  const intervals = [];
+  let requiresApproval = false;
+  parts.forEach(part => {
+    const up = part.toUpperCase();
+    if (up === 'CONFIRM' || up === 'COFNIRM'){
+      requiresApproval = true;
+      return;
+    }
+    const tokens = part.split('-').map(s=>String(s||'').trim()).filter(Boolean);
+    if (tokens.length !== 2) return;
+    const iniStr = normHHMM_(tokens[0]);
+    const finStr = normHHMM_(tokens[1]);
+    if (!iniStr || !finStr) return;
+    const iniMin = toMin_(iniStr);
+    const finMin = toMin_(finStr);
+    if (!isFinite(iniMin) || !isFinite(finMin) || finMin <= iniMin) return;
+    intervals.push({ inicio:iniStr, fin:finStr, iniMin, finMin });
+  });
+  return { raw:text, requiresApproval, intervals };
+}
+
+function getConflicts_(fecha, salonId, ini, fin, estados){
   const lr = SH_RES.getLastRow(); if (lr<2) return [];
   const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
 
@@ -646,8 +737,11 @@ function getConflicts_(fecha, salonId, ini, fin){
   const finMin = toMin_(normHHMM_(fin));
   if (isNaN(iniMin) || isNaN(finMin)) return [];
 
+  const estadosCmp = (Array.isArray(estados) && estados.length ? estados : ['APROBADA'])
+    .map(s => String(s||'').toUpperCase());
+
   return rows
-    .filter(r => String(r[2]).toUpperCase()==='APROBADA'
+    .filter(r => estadosCmp.indexOf(String(r[2]||'').toUpperCase()) !== -1
               && ymdCell_(r[3])===String(fecha).slice(0,10)
               && String(r[6]).trim()===String(salonId).trim())
     .filter(r => {
@@ -658,6 +752,7 @@ function getConflicts_(fecha, salonId, ini, fin){
     })
     .map(r => ({
       id: r[0],
+      estado: String(r[2]||''),
       prioridad: Number(r[15]||0),
       solicitante: String(r[9]||''),
       solicitante_email: String(r[9]||''),
@@ -764,15 +859,32 @@ function apiCancelarReservaAdmin(id, motivo){
   // Guardarrail: hasta 30 min antes del inicio
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
-  if (String(r.estado).toUpperCase()==='CANCELADA') return {ok:false,msg:'La reserva ya está cancelada'};
-  const start = toDate_(r.fecha);
-  const [hh,mi] = (r.hora_inicio||'00:00').split(':').map(Number);
-  start.setHours(hh||0, mi||0, 0, 0);
-  const now = new Date();
-  if (now.getTime() > (start.getTime() - 30*60*1000)) {
-    return {ok:false, msg:'Fuera de ventana: solo se permite cancelar hasta 30 min antes del inicio.'};
+  const estado = String(r.estado).toUpperCase();
+  if (estado==='CANCELADA') return {ok:false,msg:'La reserva ya está cancelada'};
+  if (estado!=='PENDIENTE'){
+    const start = toDate_(r.fecha);
+    const [hh,mi] = (r.hora_inicio||'00:00').split(':').map(Number);
+    start.setHours(hh||0, mi||0, 0, 0);
+    const now = new Date();
+    if (now.getTime() > (start.getTime() - 30*60*1000)) {
+      return {ok:false, msg:'Fuera de ventana: solo se permite cancelar hasta 30 min antes del inicio.'};
+    }
   }
   return cancelReservaById_(id, motivo||'Cancelada por administración', me);
+}
+
+function apiAprobarReservaAdmin(id){
+  const me = (Session.getActiveUser().getEmail()||'');
+  if (!isAdminEmail_(me)) return {ok:false,msg:'No autorizado'};
+  const r = getReservaById_(id);
+  if (!r) return {ok:false,msg:'Reserva no encontrada'};
+  const estado = String(r.estado||'').toUpperCase();
+  if (estado === 'CANCELADA') return {ok:false,msg:'La reserva está cancelada'};
+  if (estado === 'APROBADA') return {ok:true, already:true};
+  setReservaField_(id, 'estado', 'APROBADA');
+  try{ sendEmailAprobacion_(id); }catch(e){}
+  try{ notificarConserjeria_(id); }catch(e){}
+  return {ok:true};
 }
 
 function cancelReservaById_(id, motivo, who){
@@ -852,6 +964,111 @@ function sendEmailCancelacion_(reservaId){
 
   MailApp.sendEmail({
     to: r.solicitante_email,
+    subject: subj,
+    htmlBody: html,
+    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+  });
+}
+
+function sendEmailPendiente_(reservaId){
+  const r = getReservaById_(reservaId); if (!r) return;
+  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
+  const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
+  const subj = `Reserva pendiente – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
+  const disclaimer = '<tr><td style="padding:12px 2px 0 2px;"><div style="padding:12px 16px; border-radius:12px; border:1px solid #fcd34d; background:#fef3c7; color:#92400e; font-weight:600;">Este salón es restringido y requiere aprobación de la administración. Tu reserva aún no está confirmada. Recibirás una notificación cuando se haya evaluado.</div></td></tr>';
+  const html = emailLayout_({
+    title: 'Reserva pendiente de aprobación',
+    preheader: `Tu solicitud para ${r.salon_nombre} está pendiente de aprobación.`,
+    htmlInner:
+      emailParagraph_(`Hola <b>${escapeHtml_(r.solicitante_nombre||'')}</b>,`) +
+      emailParagraph_('Recibimos tu solicitud de reserva y se envió a la administración para aprobación. A continuación, el resumen del evento:') +
+      emailDetailsRows_([
+        ['Salón', r.salon_nombre],
+        ['Fecha', fmtDMY_(r.fecha)],
+        ['Hora', fmt12_(r.hora_inicio) + ' – ' + fmt12_(r.hora_fin)],
+        ['Evento', r.evento_nombre||''],
+        ['Asistentes', String(r.cant_personas||0)],
+        ['Público', r.publico_tipo||'']
+      ]) +
+      emailParagraph_('Si ya no necesitas el espacio puedes cancelar la solicitud con el botón.') +
+      disclaimer,
+    ctaUrl: cancelUrl,
+    ctaLabel: 'Cancelar solicitud',
+    footer: 'La administración revisará tu solicitud y recibirás un correo con la decisión.'
+  });
+
+  MailApp.sendEmail({
+    to: r.solicitante_email,
+    subject: subj,
+    htmlBody: html,
+    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+  });
+}
+
+function sendEmailAprobacion_(reservaId){
+  const r = getReservaById_(reservaId); if (!r) return;
+  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
+  const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
+  const subj = `Reserva aprobada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
+  const html = emailLayout_({
+    title: 'Reserva aprobada',
+    preheader: `La administración aprobó tu reserva para ${r.salon_nombre}.`,
+    htmlInner:
+      emailParagraph_(`Hola <b>${escapeHtml_(r.solicitante_nombre||'')}</b>,`) +
+      emailParagraph_('La administración revisó tu solicitud y la reserva fue aprobada. Estos son los detalles confirmados:') +
+      emailDetailsRows_([
+        ['Salón', r.salon_nombre],
+        ['Fecha', fmtDMY_(r.fecha)],
+        ['Hora', fmt12_(r.hora_inicio) + ' – ' + fmt12_(r.hora_fin)],
+        ['Evento', r.evento_nombre||''],
+        ['Asistentes', String(r.cant_personas||0)],
+        ['Público', r.publico_tipo||'']
+      ]) +
+      emailParagraph_('Si necesitas desistir de la reserva puedes cancelarla desde el sistema con el botón.'),
+    ctaUrl: cancelUrl,
+    ctaLabel: 'Cancelar reserva',
+    footer: 'Gracias por utilizar el sistema de reservas.'
+  });
+
+  MailApp.sendEmail({
+    to: r.solicitante_email,
+    subject: subj,
+    htmlBody: html,
+    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+  });
+}
+
+function notifyAdminReservaPendiente_(reservaId){
+  const r = getReservaById_(reservaId); if (!r) return;
+  const toList = (cfg_('ADMIN_EMAILS') || cfg_('ADMIN_CONTACT_EMAIL') || '')
+    .split(';').map(s=>s.trim()).filter(Boolean);
+  if (!toList.length) return;
+  const subj = `Pendiente de aprobación – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
+  const intro = emailParagraph_('Hola equipo de administración,')
+    + emailParagraph_('Se registró una nueva reserva en un salón restringido y requiere aprobación.');
+  const details = emailDetailsRows_([
+    ['Salón', r.salon_nombre],
+    ['Fecha', fmtDMY_(r.fecha)],
+    ['Hora', `${fmt12_(r.hora_inicio)} – ${fmt12_(r.hora_fin)}`],
+    ['Evento', r.evento_nombre || ''],
+    ['Solicitante', `${r.solicitante_nombre||''} (${r.solicitante_email||''})`],
+    ['Público', r.publico_tipo || '']
+  ]);
+  const reminder = '<tr><td style="padding:12px 2px 0 2px;"><div style="padding:12px 16px; border-radius:12px; border:1px solid #bfdbfe; background:#dbeafe; color:#1e3a8a; font-weight:600;">Revisa la solicitud, apruébala o cancélala desde el panel administrativo.</div></td></tr>';
+  const html = emailLayout_({
+    title: 'Nueva reserva pendiente de aprobación',
+    preheader: `Solicitud registrada para ${r.salon_nombre}.`,
+    htmlInner: intro + details + reminder,
+    ctaUrl: adminPanelUrl_(),
+    ctaLabel: 'Abrir panel administrativo',
+    footer: 'Gracias por gestionar las solicitudes restringidas.'
+  });
+
+  MailApp.sendEmail({
+    to: toList.join(','),
     subject: subj,
     htmlBody: html,
     name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
@@ -952,6 +1169,14 @@ function setReservaField_(id, field, value){
   const lr = SH_RES.getLastRow(); if (lr<2) return;
   const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
   for (let i=0;i<rows.length;i++){ if (rows[i][0]===id){ SH_RES.getRange(i+2,c).setValue(value); SH_RES.getRange(i+2,20).setValue(nowStr_()); break; } }
+}
+
+function adminPanelUrl_(){
+  const explicit = cfg_('ADMIN_PANEL_URL') || cfg_('ADMIN_WEBAPP_URL');
+  if (explicit) return explicit;
+  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
+  const exec = normalizeExecUrl_(base);
+  return exec + (exec.indexOf('?')===-1 ? '?mode=admin' : '&mode=admin');
 }
 
 function normalizeExecUrl_(url){
@@ -1266,7 +1491,7 @@ function setupSheetsAndConfig(){
     {name:'Config', headers:['key','value']},
     {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','estado','extension']},
     {name:'Conserjes', headers:['codigo','nombre','email','telefono','activo'] },
-    {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede']},
+    {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede','restriccion']},
     {name:'Reservas', headers:[
       'id','token','estado','fecha','hora_inicio','hora_fin','salon_id','salon_nombre','cant_personas','solicitante_email','solicitante_nombre','departamento','extension','evento_nombre','publico_tipo','prioridad','conserje_requerido','conserje_notificado','creado_en','actualizado_en','cancelado_por','cancelado_motivo','conserje_codigo_asignado'
     ]},
@@ -1274,8 +1499,26 @@ function setupSheetsAndConfig(){
   const ss = SpreadsheetApp.getActive();
   must.forEach(s=>{
     let sh = ss.getSheetByName(s.name);
-    if (!sh){ sh = ss.insertSheet(s.name); sh.getRange(1,1,1,s.headers.length).setValues([s.headers]); }
-    else if (sh.getLastRow()<1){ sh.getRange(1,1,1,s.headers.length).setValues([s.headers]); }
+    if (!sh){
+      sh = ss.insertSheet(s.name);
+      sh.getRange(1,1,1,s.headers.length).setValues([s.headers]);
+    } else if (sh.getLastRow()<1){
+      sh.getRange(1,1,1,s.headers.length).setValues([s.headers]);
+    } else {
+      const maxCols = Math.max(sh.getLastColumn(), s.headers.length);
+      const current = sh.getRange(1,1,1,maxCols).getValues()[0];
+      let needsUpdate = false;
+      if (current.length < s.headers.length) {
+        needsUpdate = true;
+      } else {
+        for (let i=0;i<s.headers.length;i++){
+          if (String(current[i]||'').trim() !== s.headers[i]){ needsUpdate = true; break; }
+        }
+      }
+      if (needsUpdate){
+        sh.getRange(1,1,1,s.headers.length).setValues([s.headers]);
+      }
+    }
   });
   SpreadsheetApp.flush();
   return 'OK';

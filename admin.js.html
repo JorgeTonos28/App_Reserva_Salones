@@ -17,6 +17,63 @@ function loadConserjeMap(cb){
     .apiListConserjes();
 }
 
+function normalizeHHMM(str){
+  const m = String(str||'').trim().match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!m) return '';
+  const h = Math.max(0, Math.min(23, parseInt(m[1],10) || 0));
+  const mi = Math.max(0, Math.min(59, parseInt(m[2],10) || 0));
+  return `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}`;
+}
+
+function parseSalonRestrictionMeta(raw){
+  const text = String(raw||'').trim();
+  if (!text) return { intervals:[], requiresApproval:false, raw:'' };
+  const parts = text.split(';').map(p=>String(p||'').trim()).filter(Boolean);
+  const intervals = [];
+  let requiresApproval = false;
+  parts.forEach(part => {
+    const up = part.toUpperCase();
+    if (up === 'CONFIRM' || up === 'COFNIRM'){
+      requiresApproval = true;
+      return;
+    }
+    const match = part.match(/^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+    if (!match) return;
+    const ini = normalizeHHMM(match[1]);
+    const fin = normalizeHHMM(match[2]);
+    if (!ini || !fin || ini === fin) return;
+    intervals.push(`${ini}-${fin}`);
+  });
+  return { intervals, requiresApproval, raw:text };
+}
+
+function applyAdminSalonMetaHints(){
+  const select = document.getElementById('a-salon');
+  const salonId = select ? select.value : '';
+  const metaMap = (typeof window !== 'undefined' && window.__SALON_META_ADMIN__) || {};
+  const meta = metaMap[salonId] || { intervals:[], requiresApproval:false };
+  const restr = document.getElementById('a-restriccionHint');
+  if (restr){
+    if (meta.intervals && meta.intervals.length){
+      restr.textContent = `Horarios restringidos: ${meta.intervals.join(', ')}`;
+      restr.hidden = false;
+    } else {
+      restr.hidden = true;
+      restr.textContent = '';
+    }
+  }
+  const appr = document.getElementById('a-aprobacionHint');
+  if (appr){
+    if (meta.requiresApproval){
+      appr.textContent = 'Este salón es restringido y requiere aprobación administrativa. Las solicitudes quedarán pendientes hasta aprobarlas.';
+      appr.hidden = false;
+    } else {
+      appr.hidden = true;
+      appr.textContent = '';
+    }
+  }
+}
+
 // ---- Fecha helpers ----
 function todayYMD(){
   const d = new Date();
@@ -52,12 +109,20 @@ function setDefaultAdminRange(days=30){
 function drawSalones(arr){
   const el = $('#salones');
   if (!arr.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
-  const rows = arr.map(s=>`<tr>
-    <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
-    <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
-    <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
-  </tr>`).join('');
-  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  const rows = arr.map(s=>{
+    const meta = parseSalonRestrictionMeta(s.restriccion);
+    const parts = [];
+    if (meta.intervals && meta.intervals.length){ parts.push(`Horarios: ${meta.intervals.join(', ')}`); }
+    if (meta.requiresApproval){ parts.push('Requiere aprobación manual'); }
+    const restr = parts.length ? parts.join('<br/>') : '—';
+    return `<tr>
+      <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
+      <td>${restr}</td>
+      <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
+      <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
 }
 function toggleSalon(id, on){ Busy.show('Guardando…'); google.script.run
@@ -83,8 +148,8 @@ function drawReservas(arr){
     const fecha = fmtDateDMY(r.fecha);
     const hora  = `${fmt12(r.hora_inicio)} - ${fmt12(r.hora_fin)}`;
     const estStr = String(r.estado||'').toUpperCase();
-    let estNic = estStr==='APROBADA'?'Aprobada':(estStr==='CANCELADA'?'Cancelada':r.estado||'');
-    let estCls = estStr==='APROBADA'?'pill pill--ok':(estStr==='CANCELADA'?'pill pill--bad':'pill pill--other');
+    let estNic = estStr==='APROBADA'?'Aprobada':(estStr==='CANCELADA'?'Cancelada':(estStr==='PENDIENTE'?'Pendiente':r.estado||''));
+    let estCls = estStr==='APROBADA'?'pill pill--ok':(estStr==='CANCELADA'?'pill pill--bad':(estStr==='PENDIENTE'?'pill pill--pending':'pill pill--other'));
     const late = tooLate(r);
     // Columna Conserje (reglas: no habilitar si cancelada o late)
     let colConserje = '';
@@ -112,7 +177,14 @@ function drawReservas(arr){
         }
       }
     }
-    const cancelar = (estStr==='APROBADA' && !late) ? `<button class="btn-blue" data-id="${r.id}">Cancelar</button>` : '';
+    let acciones = '';
+    if (estStr==='APROBADA' && !late){
+      acciones = `<button class="btn-blue" data-id="${r.id}" data-action="cancel">Cancelar</button>`;
+    } else if (estStr==='PENDIENTE'){
+      const approveBtn = `<button class="btn-blue" data-id="${r.id}" data-action="approve">Aprobar</button>`;
+      const cancelBtn = `<button class="btn-blue btn--sm" data-id="${r.id}" data-action="cancel" data-pending="1">Cancelar</button>`;
+      acciones = `<div style="display:flex;flex-direction:column;gap:6px;">${approveBtn}${cancelBtn}</div>`;
+    }
     return `
       <tr>
         <td data-th="Fecha"><span class="val">${fecha}</span></td>
@@ -122,7 +194,7 @@ function drawReservas(arr){
         <td data-th="Solicitante"><span class="val">${r.solicitante_nombre} (${r.solicitante_email})</span></td>
       <td data-th="Estado"><span class="${estCls}">${estNic}</span></td>
         <td data-th="Conserje"><span class="val">${colConserje}</span></td>
-        <td data-th=""><span class="val">${cancelar}</span></td>
+        <td data-th=""><span class="val">${acciones}</span></td>
       </tr>`;
   }).join('');
   el.innerHTML = `
@@ -138,16 +210,39 @@ function drawReservas(arr){
     </div>`;
 
   // handlers
-  el.querySelectorAll('button[data-id]').forEach(b=> b.onclick = ()=> cancelarAdmin(b.dataset.id));
+  el.querySelectorAll('button[data-action]').forEach(btn=>{
+    const act = btn.dataset.action;
+    if (act === 'cancel'){
+      btn.onclick = ()=> cancelarAdmin(btn.dataset.id, btn.dataset.pending ? 'Cancelada por administración (pendiente)' : undefined);
+    } else if (act === 'approve'){
+      btn.onclick = ()=> aprobarAdmin(btn.dataset.id);
+    }
+  });
   el.querySelectorAll('a.asignar-link').forEach(a=> a.onclick = (e)=>{ e.preventDefault(); openAsignarModal(a.dataset.id); });
 }
 
-function cancelarAdmin(id){
-  const motivo = prompt('Motivo de cancelación:','Cancelada por administración'); if (motivo===null) return;
+function cancelarAdmin(id, defaultMotivo){
+  const motivo = prompt('Motivo de cancelación:', defaultMotivo || 'Cancelada por administración'); if (motivo===null) return;
   Busy.show('Cancelando…'); google.script.run
     .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ buscar(); } else modal(r&&r.msg||'No se pudo cancelar'); })
     .withFailureHandler(e=>{ Busy.hide(); modal('Error al cancelar'); })
     .apiCancelarReservaAdmin(id, motivo);
+}
+
+function aprobarAdmin(id){
+  Busy.show('Aprobando…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      if (r && r.ok){
+        modal(r.already ? 'La reserva ya estaba aprobada.' : 'Reserva aprobada.');
+        buscar();
+      } else {
+        modal((r && r.msg) || 'No se pudo aprobar la reserva.');
+      }
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('Error al aprobar la reserva.'); })
+    .apiAprobarReservaAdmin(id);
 }
 
 function loadSalones(){ google.script.run
@@ -156,13 +251,22 @@ function loadSalones(){ google.script.run
     drawSalones(data);
     // === NUEVO: mapa de capacidades para validación local ===
     window.__SALON_CAPS__ = {};
-    data.forEach(s => { window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0; });
+    window.__SALON_META_ADMIN__ = {};
+    data.forEach(s => {
+      window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
+      window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+    });
     // === NUEVO: poblar select del formulario Admin si existe ===
     const sel = document.getElementById('a-salon');
     if (sel){
       const opts = ['<option value="">[Seleccionar]</option>']
         .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
       sel.innerHTML = opts.join('');
+      if (!sel.__metaListenerAttached){
+        sel.addEventListener('change', applyAdminSalonMetaHints);
+        sel.__metaListenerAttached = true;
+      }
+      applyAdminSalonMetaHints();
     }
     // limpia el tag de cap máx al cargar
     const tag = document.getElementById('a-capMaxTag');
@@ -347,6 +451,7 @@ function refreshSlotsAdmin(){
     const capErr = document.getElementById('a-cantError');
     if (capErr){ capErr.hidden = true; capErr.textContent=''; }
     $('#a-cant')?.classList.remove('input-error');
+    applyAdminSalonMetaHints();
     return;
   }
 
@@ -389,10 +494,14 @@ function refreshSlotsAdmin(){
             note = ' (reservado)';
           }
         }
-        return `<option value="${s.inicio}" ${puede?'':'disabled'}>${s.inicio} - ${s.fin}${note}</option>`;
+        const esRestriccion = !!s.restringido || String(s.motivoRestriccion||'').toUpperCase()==='RESTRICCION';
+        if (esRestriccion){ note = ' (horario restringido)'; }
+        const disabledAttr = (!puede || esRestriccion) ? 'disabled' : '';
+        return `<option value="${s.inicio}" ${disabledAttr}>${s.inicio} - ${s.fin}${note}</option>`;
       }));
 
       $('#a-hora').innerHTML = opts.join('');
+      applyAdminSalonMetaHints();
 
       // === Actualizar el tag "(máx N)" en el label
       const tag = document.getElementById('a-capMaxTag');
@@ -427,7 +536,20 @@ function verifySelectedSlotAdmin(){
   if(!salon||!fecha||!dur||!ini) return;
   Busy.show('Confirmando intervalo…');
   google.script.run
-    .withSuccessHandler(r=>{ Busy.hide(); if(!r||!r.ok) return; if(!r.disponible && !(2 > (r.maxPrio||0))){ modal('Ese intervalo ya no está disponible.'); $('#a-hora').value=''; scheduleRefreshSlotsAdmin(); } })
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      if(!r||!r.ok) return;
+      if(!r.disponible && !(2 > (r.maxPrio||0))){
+        const motivo = String(r.motivo||'').toUpperCase();
+        if (motivo === 'RESTRICCION'){
+          modal('Este salón no permite reservas en el horario seleccionado. Elige otro intervalo.');
+        } else {
+          modal('Ese intervalo ya no está disponible.');
+        }
+        $('#a-hora').value='';
+        scheduleRefreshSlotsAdmin();
+      }
+    })
     .withFailureHandler(()=>{ Busy.hide(); })
     .apiCheckSlot(fecha, salon, ini, dur, 2);
 }
@@ -454,10 +576,18 @@ function crearReservaAdmin(){
   }
   Busy.show('Creando reserva…');
   google.script.run
-    .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ modal('Reserva creada.'); buscar(); // refresca listado
+    .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){
+      const estado = String(r.estado||'').toUpperCase();
+      if (estado === 'PENDIENTE' || r.requiere_aprobacion){
+        modal('Solicitud registrada como pendiente. Revisa el historial para aprobarla cuando corresponda.');
+      } else {
+        modal('Reserva creada.');
+      }
+      buscar(); // refresca listado
       // reset rápido
       ['a-salon','a-hora','a-evento','a-nombre','a-email','a-dep','a-ext','a-cant'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.value=''; });
       const df = document.getElementById('a-fecha'); if(df) df.value = df.min || df.value;
+      applyAdminSalonMetaHints();
     } else { modal((r&&r.msg)||'No se pudo crear'); } })
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
     .apiCrearReserva(p);
