@@ -2,6 +2,34 @@
 /* ========= Utils ========= */
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0, email: '' });
+
+function sanitizePositiveInt(val, fallback){
+  const num = Number(val);
+  if (!isFinite(num) || num <= 0){
+    const fb = Number(fallback);
+    const normalized = isFinite(fb) && fb > 0 ? fb : 1;
+    return Math.max(1, Math.round(normalized));
+  }
+  return Math.max(1, Math.round(num));
+}
+
+const RAW_GLOBAL_CFG = window.__GLOBAL_CFG__ || {};
+const GLOBAL_CFG = (() => {
+  const cfg = {
+    HORARIO_INICIO: normalizeHHMM(RAW_GLOBAL_CFG.HORARIO_INICIO || RAW_GLOBAL_CFG.horario_inicio || '07:00') || '07:00',
+    HORARIO_FIN:    normalizeHHMM(RAW_GLOBAL_CFG.HORARIO_FIN    || RAW_GLOBAL_CFG.horario_fin    || '20:00') || '20:00',
+    DUR_MIN:  sanitizePositiveInt(RAW_GLOBAL_CFG.DUR_MIN  ?? RAW_GLOBAL_CFG.duration_min, 30),
+    DUR_MAX:  sanitizePositiveInt(RAW_GLOBAL_CFG.DUR_MAX  ?? RAW_GLOBAL_CFG.duration_max, 240),
+    DUR_STEP: sanitizePositiveInt(RAW_GLOBAL_CFG.DUR_STEP ?? RAW_GLOBAL_CFG.duration_step, 30)
+  };
+  if (cfg.DUR_MIN > cfg.DUR_MAX){ cfg.DUR_MAX = cfg.DUR_MIN; }
+  if (!cfg.DUR_STEP){ cfg.DUR_STEP = 30; }
+  return cfg;
+})();
+if (typeof window !== 'undefined'){
+  window.__GLOBAL_CFG__ = Object.assign({}, window.__GLOBAL_CFG__ || {}, GLOBAL_CFG);
+  window.__SALON_CFG__ = window.__SALON_CFG__ || {};
+}
 function getPrioridadSalonesList(){
   const seen = {};
   const out = [];
@@ -257,29 +285,49 @@ function loadSalones(){
       const data = Array.isArray(res.data) ? res.data : (Array.isArray(res) ? res : []);
       __SALONES__ = data || [];
       const sel = $('#selSalon');
-      const opts = ['<option value="">[Seleccionar]</option>']
-        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado ? '' : ' (Deshabilitado)'}</option>`));
-      sel.innerHTML = opts.join('');
+      if (sel){
+        const opts = ['<option value="">[Seleccionar]</option>']
+          .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado ? '' : ' (Deshabilitado)'}</option>`));
+        sel.innerHTML = opts.join('');
+      }
       $('#hora').innerHTML = '';
 
       // Mapa local de capacidades para usar en validaciones/hints sin consultar al servidor
       window.__SALON_CAPS__ = {};
       window.__SALON_META__ = {};
+      window.__SALON_CFG__ = {};
       data.forEach(s => {
         window.__SALON_CAPS__[s.id] = Number(s.capacidad) || 0;
         window.__SALON_META__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+        const cfg = {
+          HORARIO_INICIO: normalizeHHMM(s.horario_inicio || '') || GLOBAL_CFG.HORARIO_INICIO,
+          HORARIO_FIN:    normalizeHHMM(s.horario_fin || '')    || GLOBAL_CFG.HORARIO_FIN,
+          DUR_MIN:  sanitizePositiveInt(s.duration_min, GLOBAL_CFG.DUR_MIN),
+          DUR_MAX:  sanitizePositiveInt(s.duration_max, GLOBAL_CFG.DUR_MAX),
+          DUR_STEP: sanitizePositiveInt(s.duration_step, GLOBAL_CFG.DUR_STEP)
+        };
+        if (cfg.DUR_MIN > cfg.DUR_MAX){ cfg.DUR_MAX = cfg.DUR_MIN; }
+        if (!cfg.DUR_STEP){ cfg.DUR_STEP = GLOBAL_CFG.DUR_STEP || 30; }
+        window.__SALON_CFG__[s.id] = cfg;
       });
 
       // Al cargar, limpia el tag de capacidad
       const tag = document.getElementById('capMaxTag');
       if (tag) tag.textContent = '';
-      // Al cargar salones, también renderizamos las opciones de duración desde Config
-      renderDurationsFromConfig();
 
-      $('#selSalon').addEventListener('change', ()=>{
-        updateSalonHint();
-        applySalonMetaHints();
-      }, { once:false });
+      if (sel){
+        sel.onchange = () => {
+          const current = sel.value || '';
+          renderDurationsFromConfig(current || null);
+          updateSalonHint();
+          applySalonMetaHints();
+          scheduleRefreshSlots();
+        };
+        renderDurationsFromConfig(sel.value || null);
+      } else {
+        renderDurationsFromConfig(null);
+      }
+
       updateSalonHint();
       applySalonMetaHints();
     })
@@ -558,12 +606,13 @@ function resetReservaForm(){
   // Selección
   const selSalon = $('#selSalon');
   if (selSalon) selSalon.value = '';
+  renderDurationsFromConfig(null);
 
   const fecha = $('#fecha');
   if (fecha) fecha.value = todayYMD();
 
   const dur = $('#dur');
-  if (dur) dur.value = (dur.querySelector('option')?.value || '30'); // primer option o 30
+  if (dur) dur.value = '';
 
   const hora = $('#hora');
   if (hora) hora.innerHTML = '<option value="">[Seleccionar]</option>';
@@ -732,6 +781,8 @@ function init(){
   $('#logo').src = (window.__LOGO_URL__ || '');
   console.log('[BOOT] ME:', ME);
 
+  renderDurationsFromConfig(null);
+
   const today = new Date();
   const y = today.getFullYear(), m = today.getMonth()+1;
   const d = String(today.getDate()).padStart(2,'0');
@@ -831,7 +882,6 @@ function init(){
   loadSalones();
   listar();
 
-  $('#selSalon').onchange = scheduleRefreshSlots;
   // También, al cambiar de salón, limpiar/volver a evaluar el error de capacidad
   $('#selSalon').addEventListener('change', ()=>{
     const cap = (window.__SALON_CAPS__||{})[$('#selSalon').value||''] || 0;
@@ -953,17 +1003,46 @@ function init(){
 document.addEventListener('DOMContentLoaded', init);
 
 /* ===== Duración desde Config ===== */
-function renderDurationsFromConfig(){
+function getSalonDurationConfig(salonId){
+  const map = (typeof window !== 'undefined' && window.__SALON_CFG__) || {};
+  const key = String(salonId || '');
+  if (key && map[key]) return map[key];
+  return GLOBAL_CFG;
+}
+
+function renderDurationsFromConfig(salonId){
   const sel = $('#dur');
-  const min  = Number(window.__DUR_MIN__ || 30);
-  const max  = Number(window.__DUR_MAX__ || 240);
-  const step = Number(window.__DUR_STEP__ || 30);
+  if (!sel) return;
+  const cfg = getSalonDurationConfig(salonId);
+  const min = sanitizePositiveInt(cfg.DUR_MIN, GLOBAL_CFG.DUR_MIN);
+  let max = sanitizePositiveInt(cfg.DUR_MAX, min);
+  if (max < min) max = min;
+  const step = sanitizePositiveInt(cfg.DUR_STEP, GLOBAL_CFG.DUR_STEP);
+  const prev = sel.value;
   const opts = ['<option value="">[Seleccionar]</option>'];
-  for (let d=min; d<=max; d+=step){
+  const validValues = new Set();
+  for (let d = min; d <= max; d += step){
     const label = humanizeMinutes(d);
     opts.push(`<option value="${d}">${label}</option>`);
+    validValues.add(String(d));
+    if (step <= 0) break;
+  }
+  if (!validValues.has(String(max))){
+    const label = humanizeMinutes(max);
+    opts.push(`<option value="${max}">${label}</option>`);
+    validValues.add(String(max));
+  }
+  if (!validValues.size){
+    const fallback = sanitizePositiveInt(GLOBAL_CFG.DUR_MIN, 30);
+    opts.push(`<option value="${fallback}">${humanizeMinutes(fallback)}</option>`);
+    validValues.add(String(fallback));
   }
   sel.innerHTML = opts.join('');
+  if (prev && validValues.has(String(prev))){
+    sel.value = prev;
+  } else {
+    sel.value = '';
+  }
 }
 function humanizeMinutes(mins){
   if (mins < 60) return `${mins} minutos`;

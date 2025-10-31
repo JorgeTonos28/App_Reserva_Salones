@@ -182,11 +182,7 @@
   </div>
   <script>
     window.__LOGO_URL__     = "<?= logoUrl ?>";
-    window.__DUR_MIN__      = <?= Number(cfg_('DURATION_MIN') || 30) ?>;
-    window.__DUR_MAX__      = <?= Number(cfg_('DURATION_MAX') || 240) ?>;
-    window.__DUR_STEP__     = <?= Number(cfg_('DURATION_STEP') || 30) ?>;
-    window.__HORARIO_INI__  = "<?= horarioInicio ?>";
-    window.__HORARIO_FIN__  = "<?= horarioFin ?>";
+    window.__GLOBAL_CFG__   = <?= JSON.stringify(globalCfg || {}) ?>;
     window.__ME__           = {
       email: "<?= me.email ?>",
       prioridad: <?= Number(me.prioridad||0) ?>,
@@ -195,7 +191,12 @@
       extension: "<?= me.extension ?>",
       prioridad_salones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
       prioridadSalones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
-      prioridad_salones_raw: "<?= me.prioridad_salones_raw || '' ?>"
+      prioridad_salones_raw: "<?= me.prioridad_salones_raw || '' ?>",
+      admin_salones: <?= JSON.stringify(me.admin_salones || []) ?>,
+      admin_salones_raw: "<?= me.admin_salones_raw || '' ?>",
+      admin_all_access: <?= me.admin_all_access ? 'true' : 'false' ?>,
+      admin_scope_ids: <?= JSON.stringify(me.admin_scope_ids || []) ?>,
+      is_general_admin: <?= me.is_general_admin ? 'true' : 'false' ?>
     };
   </script>
 

@@ -64,6 +64,9 @@
         <input id="u-ext" placeholder="Extensión"/>
       </div>
       <div class="row g" style="margin-top:8px">
+        <input id="u-admin-salones" placeholder="Salones administración (S0001;S0002)"/>
+      </div>
+      <div class="row g" style="margin-top:8px">
         <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
         <button id="u-close" class="btn btn-blue btn--sm" type="button">Cerrar</button>
       </div>
@@ -186,8 +189,17 @@
       prioridad: <?= Number(me && me.prioridad || 0) ?>,
       prioridad_salones: <?= JSON.stringify(me && me.prioridad_salones || []) ?>,
       prioridadSalones: <?= JSON.stringify(me && me.prioridad_salones || []) ?>,
-      prioridad_salones_raw: "<?= me && me.prioridad_salones_raw || '' ?>"
+      prioridad_salones_raw: "<?= me && me.prioridad_salones_raw || '' ?>",
+      admin_salones: <?= JSON.stringify(me && me.admin_salones || []) ?>,
+      admin_salones_raw: "<?= me && me.admin_salones_raw || '' ?>",
+      admin_all_access: <?= (me && me.admin_all_access) ? 'true' : 'false' ?>,
+      is_general_admin: <?= (me && me.is_general_admin) ? 'true' : 'false' ?>,
+      admin_scope_ids: <?= JSON.stringify(me && me.admin_scope_ids || []) ?>
     };
+    window.__ADMIN_ALLOWED_SALONES__ = <?= JSON.stringify(me && me.admin_salones || []) ?>;
+    window.__ADMIN_ALL_ACCESS__ = <?= (me && me.admin_all_access) ? 'true' : 'false' ?>;
+    window.__ADMIN_IS_GENERAL__ = <?= (me && me.is_general_admin) ? 'true' : 'false' ?>;
+    window.__GLOBAL_CFG__ = <?= JSON.stringify(globalCfg || {}) ?>;
   </script>
 
   <?!= include_('admin.js'); ?>
