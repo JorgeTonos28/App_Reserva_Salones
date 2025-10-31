@@ -68,14 +68,19 @@ function showBlockedSlotMessage(slotInfo){
   const motivo = String(slotInfo.motivoConciliacion || '').toUpperCase();
   const hayEventoExterno = (motivo === 'PUBLICO_EXTERNO') || ocupantes.some(o => isPublicoExternoOMixto(o.publico_tipo));
   const hayMismaPrioridad = (motivo === 'MISMA_PRIORIDAD') || ocupantes.some(o => Number(o.prioridad || 0) === userPrio);
+  const rawMaxPrio = (slotInfo.maxPrio == null || slotInfo.maxPrio === '') ? null : Number(slotInfo.maxPrio);
+  const maxPrio = (Number.isFinite ? Number.isFinite(rawMaxPrio) : isFinite(rawMaxPrio)) ? rawMaxPrio : null;
+  const usuarioTieneMenorPrioridad = maxPrio !== null && userPrio < maxPrio;
 
-  if (!hayEventoExterno && !hayMismaPrioridad) return false;
+  if ((!hayEventoExterno && !hayMismaPrioridad) || (usuarioTieneMenorPrioridad && !hayMismaPrioridad)) {
+    return false;
+  }
 
   const items = ocupantes.map(o => {
     const nombre = escHtml(o.nombre || o.email || 'Reservante');
     const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
-    const evento = o.evento ? `<br/><span class="muted">Evento: ${escHtml(o.evento)}</span>` : '';
-    const publico = o.publico_tipo ? `<br/><span class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</span>` : '';
+    const evento = o.evento ? `<div class="muted">Evento: ${escHtml(o.evento)}</div>` : '';
+    const publico = o.publico_tipo ? `<div class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</div>` : '';
     const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
     const prioridad = escHtml(String(o.prioridad || 0));
     return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
@@ -87,7 +92,7 @@ function showBlockedSlotMessage(slotInfo){
     const html = `
       <p>Este horario ya está reservado para un evento con público externo o mixto.</p>
       ${listaHtml}
-      <p>Debes coordinar con la(s) persona(s) anfitriona(s) antes de realizar cambios.</p>
+      <p>Debes coordinar con la(s) persona(s) anfitriona(s) para que cancelen la reserva antes de que puedas agendar este horario.</p>
     `;
     modal(html, 'Horario reservado', { html: true });
     return true;
@@ -98,7 +103,7 @@ function showBlockedSlotMessage(slotInfo){
   const html = `
     <p>Este horario ya está reservado por otra persona con la misma prioridad.</p>
     ${listaHtml}
-    <p>Deben conciliar la reserva antes de que puedas utilizar este horario.</p>
+    <p>Debes coordinar con la otra parte para que cancele su reserva y puedas agendar este horario.</p>
   `;
   modal(html, 'Horario reservado', { html: true });
   return true;
@@ -224,18 +229,19 @@ function refreshSlots(){
         .filter(s => !isToday || toMin(s.inicio) > nowMin)   // << solo futuros si es hoy
         .map(s => {
         const ocupado = !s.disponible;
-        const maxP = (s.maxPrio==null ? null : Number(s.maxPrio));
+        const rawMax = (s.maxPrio==null || s.maxPrio==='') ? null : Number(s.maxPrio);
+        const maxP = (Number.isFinite ? Number.isFinite(rawMax) : isFinite(rawMax)) ? rawMax : null;
         const puede = !!s.seleccionable;
+        const userLowerThanMax = maxP !== null && prio < maxP;
+        const motivo = String(s.motivoConciliacion || '').toUpperCase();
         let note = '';
         if (ocupado){
           if (!puede){
-            if (s.motivoConciliacion === 'PUBLICO_EXTERNO'){
-              note = ' (evento externo – coordinar)';
-            } else if (s.motivoConciliacion === 'MISMA_PRIORIDAD' && prio > 0){
+            if (motivo === 'PUBLICO_EXTERNO'){
+              note = userLowerThanMax ? ' (reservado)' : ' (evento externo – coordinar)';
+            } else if (motivo === 'MISMA_PRIORIDAD' && prio > 0){
               note = ' (reservado – coordinar)';
-            } else if (prio > 0){
-              note = ' (reservado)';
-            } else if (maxP!=null) {
+            } else if (userLowerThanMax || prio > 0 || maxP!=null) {
               note = ' (reservado)';
             }
           } else {
@@ -243,7 +249,8 @@ function refreshSlots(){
           }
         }
         const label = `${s.inicio} - ${s.fin}${note}`;
-        const disabledAttr = (!puede && prio <= 0) ? 'disabled' : '';
+        const disableOption = (!puede && (userLowerThanMax || prio <= 0));
+        const disabledAttr = disableOption ? 'disabled' : '';
         return `<option value="${s.inicio}" ${disabledAttr}>${label}</option>`;
       }).join('');
 

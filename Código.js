@@ -590,7 +590,7 @@ function apiCrearReserva(payload){
         maxPrio = Math.max(maxPrio, Number(conflicts[i].prioridad||0));
       }
       if (mismaPrioridad){
-        return { ok:false, msg:'Ese intervalo ya está reservado por otra persona con la misma prioridad. Deben coordinar la conciliación.' };
+        return { ok:false, msg:'Ese intervalo ya está reservado por otra persona con la misma prioridad. Deben coordinar con la otra parte para que cancele la reserva antes de agendar.' };
       }
       if (prioSolic <= maxPrio){
         return { ok:false, msg:'Ese intervalo ya está reservado. Elige otra hora.' };
