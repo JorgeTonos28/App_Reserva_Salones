@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.6-2025-11-04';
+const APP_VERSION = 'salones-v9.7-2025-11-05';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -163,28 +163,79 @@ function getUser_(){
   if (row) {
     // Usuario encontrado en la hoja
     row._exists = true;
+    if (!Array.isArray(row.prioridad_salones)){
+      row.prioridad_salones = parsePrioridadSalones_(row.prioridad_salones_raw||'');
+    }
     return row;
   }
   // Usuario NO existe en la hoja: devolvemos objeto “vacío” pero con bandera
-  return { email, nombre:'', departamento:'', rol:'', prioridad:0, estado:'', _exists:false };
+  return {
+    email,
+    nombre:'',
+    departamento:'',
+    rol:'',
+    prioridad:0,
+    prioridad_salones:[],
+    prioridad_salones_raw:'',
+    estado:'',
+    _exists:false
+  };
 }
 function findUserByEmail_(email){
   if (!email) return null;
   const lr = SH_USR.getLastRow();
   if (lr<2) return null;
-  // lee hasta 7 columnas (por si agregaste 'estado' y 'extension')
-  const vals = SH_USR.getRange(2,1,lr-1,7).getValues();
+  // lee columnas esperadas (incluye prioridad_salones, estado y extensión)
+  const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
   const r = vals.find(v => String(v[0]).trim().toLowerCase()===email.toLowerCase());
   if (!r) return null;
+  const prioridadSalonesRaw = String(r[5]||'').trim();
   return {
     email:r[0],
     nombre:r[1],
     departamento:r[2],
     rol:(r[3]||'').toUpperCase(),
     prioridad:Number(r[4]||0),
-    estado:(r[5]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
-    extension:String(r[6]||'')             // NUEVO
+    prioridad_salones: parsePrioridadSalones_(prioridadSalonesRaw),
+    prioridad_salones_raw: prioridadSalonesRaw,
+    estado:(r[6]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
+    extension:String(r[7]||'')             // NUEVO
   };
+}
+
+function parsePrioridadSalones_(raw){
+  const text = String(raw||'').trim();
+  if (!text) return [];
+  const seen = {};
+  return text.split(';')
+    .map(s => String(s||'').trim().toUpperCase())
+    .filter(token => {
+      if (!token) return false;
+      if (seen[token]) return false;
+      seen[token] = true;
+      return true;
+    });
+}
+
+function basePriorityForUser_(user){
+  if (!user) return 0;
+  const raw = Number(user && user.prioridad || 0);
+  if (user && user.rol === 'ADMIN' && !Number(raw||0)){
+    return 2;
+  }
+  return Number(raw||0);
+}
+
+function effectivePriorityForSalon_(user, salonId){
+  const base = basePriorityForUser_(user);
+  if (base <= 0) return base;
+  if (!salonId) return base;
+  const codes = Array.isArray(user && user.prioridad_salones)
+    ? user.prioridad_salones
+    : parsePrioridadSalones_(user && user.prioridad_salones_raw);
+  if (!codes || !codes.length) return base;
+  const target = String(salonId||'').trim().toUpperCase();
+  return codes.includes(target) ? base : 0;
 }
 
 function isAdminEmail_(email){
@@ -385,6 +436,10 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
 
     if (!fechaStr || !salonId) return { ok:true, data: [] };
 
+    const me = getUser_();
+    const prioAplicada = effectivePriorityForSalon_(me, salonId);
+    userPrio = Number(prioAplicada||0);
+
     var startMin = toMin_(HINI);
     var endMin   = toMin_(HFIN);
     if (!(endMin > startMin)) { startMin = toMin_('07:00'); endMin = toMin_('20:00'); }
@@ -539,12 +594,15 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
       return { ok:true, disponible:false, motivo:'RESTRICCION', requiereAprobacion: restr.requiresApproval || false };
     }
 
+    const me = getUser_();
+    const prioAplicada = effectivePriorityForSalon_(me, salonId);
+
     var conflictStates = restr.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
     var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin, conflictStates);
     var maxPrio =  conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)), -1);
     var hayEventoExterno = conflicts.some(function(c){ return isPublicoExternoOMixto_(c.publico_tipo); });
     var hayPendiente = conflicts.some(function(c){ return String(c.estado||'').toUpperCase()==='PENDIENTE'; });
-    userPrio = Number(userPrio||0);
+    userPrio = Number(prioAplicada||0);
     var disponible = (conflicts.length===0);
     if (hayPendiente){
       disponible = false;
@@ -615,8 +673,8 @@ function apiCrearReserva(payload){
     const conserjeReq = (iniMin >= toMin_('16:00') || finMin > toMin_('16:00')) ? 'SI' : 'NO';
 
     // ---- Conflictos / prioridad
-    // Prioridad del solicitante; si es ADMIN y no tiene prioridad asignada, usar 2 por defecto
-    const prioSolic = Number( (me.rol==='ADMIN' && !Number(me.prioridad||0)) ? 2 : (me.prioridad||0) );
+    // Prioridad del solicitante considerando salones permitidos (admins sin prioridad explícita => 2)
+    const prioSolic = effectivePriorityForSalon_(me, sal.id);
 
     const conflictStates = restrSalon.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
     const conflicts = getConflicts_(fecha, sal.id, horaIni, horaFin, conflictStates);
@@ -1489,7 +1547,7 @@ function dbg_Send_7AM_Preview(baseYMD, toOverride){
 function setupSheetsAndConfig(){
   const must = [
     {name:'Config', headers:['key','value']},
-    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','estado','extension']},
+    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','prioridad_salones','estado','extension']},
     {name:'Conserjes', headers:['codigo','nombre','email','telefono','activo'] },
     {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede','restriccion']},
     {name:'Reservas', headers:[
@@ -1587,16 +1645,21 @@ function getLogoUrl(){
 // ========= Usuarios (Admin CRUD) =========
 function apiListUsuarios(){
   const lr = SH_USR.getLastRow(); if (lr<2) return { ok:true, data:[] };
-  const vals = SH_USR.getRange(2,1,lr-1,7).getValues(); // email,nombre,departamento,rol,prioridad,estado,extension
-  const data = vals.map(r=>({
-    email:String(r[0]||'').toLowerCase(),
-    nombre:String(r[1]||''),
-    departamento:String(r[2]||''),
-    rol:String(r[3]||'').toUpperCase(),
-    prioridad:Number(r[4]||0),
-    estado:String(r[5]||'').toUpperCase(),
-    extension:String(r[6]||'')
-  }));
+  const vals = SH_USR.getRange(2,1,lr-1,8).getValues(); // email,nombre,departamento,rol,prioridad,prioridad_salones,estado,extension
+  const data = vals.map(r=>{
+    const prioSalonesRaw = String(r[5]||'').trim();
+    return {
+      email:String(r[0]||'').toLowerCase(),
+      nombre:String(r[1]||''),
+      departamento:String(r[2]||''),
+      rol:String(r[3]||'').toUpperCase(),
+      prioridad:Number(r[4]||0),
+      prioridad_salones: prioSalonesRaw,
+      prioridad_salones_list: parsePrioridadSalones_(prioSalonesRaw),
+      estado:String(r[6]||'').toUpperCase(),
+      extension:String(r[7]||'')
+    };
+  });
   return { ok:true, data };
 }
 
@@ -1609,19 +1672,31 @@ function apiUpsertUsuario(u){
   const dep = String(u.departamento||'').trim();
   const rol = String(u.rol||'').toUpperCase().trim();
   const prio = Number(u.prioridad||0);
+  let prioSalonesInput = '';
+  if (Array.isArray(u.prioridad_salones)){
+    prioSalonesInput = u.prioridad_salones.join(';');
+  } else if (Array.isArray(u.prioridadSalones)){
+    prioSalonesInput = u.prioridadSalones.join(';');
+  } else if (typeof u.prioridad_salones === 'string'){
+    prioSalonesInput = u.prioridad_salones;
+  } else if (typeof u.prioridadSalones === 'string'){
+    prioSalonesInput = u.prioridadSalones;
+  }
+  const prioSalonesList = parsePrioridadSalones_(prioSalonesInput);
+  const prioSalonesRaw = prioSalonesList.join(';');
   const est = String(u.estado||'').toUpperCase().trim();
   const ext = String(u.extension||'').trim();
   const lr = SH_USR.getLastRow();
   if (lr>=2){
-    const vals = SH_USR.getRange(2,1,lr-1,7).getValues();
+    const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
     for (let i=0;i<vals.length;i++){
       if (String(vals[i][0]).toLowerCase().trim()===email){
-        SH_USR.getRange(i+2,2,1,6).setValues([[nombre,dep,rol,prio,est,ext]]);
+        SH_USR.getRange(i+2,2,1,7).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext]]);
         return { ok:true, updated:true };
       }
     }
   }
-  SH_USR.appendRow([email,nombre,dep,rol,prio,est,ext]);
+  SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext]);
   return { ok:true, created:true };
 }
 
@@ -1813,15 +1888,15 @@ function apiSolicitarAcceso(nombre, departamento, extension){
     const lr = SH_USR.getLastRow();
     // buscamos fila existente
     if (lr >= 2){
-      const vals = SH_USR.getRange(2,1,lr-1,7).getValues();
+      const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
       for (let i=0;i<vals.length;i++){
         if (String(vals[i][0]).trim().toLowerCase() === email){
           // Actualiza nombre, departamento, extension y estado -> PENDIENTE
           SH_USR.getRange(i+2,2).setValue(nombre);
           SH_USR.getRange(i+2,3).setValue(departamento);
           // deja rol/prioridad como están (admin los define)
-          SH_USR.getRange(i+2,6).setValue('PENDIENTE'); // estado (col 6 = F)
-          SH_USR.getRange(i+2,7).setValue(extension);   // extension (col 7 = G)
+          SH_USR.getRange(i+2,7).setValue('PENDIENTE'); // estado (col 7 = G)
+          SH_USR.getRange(i+2,8).setValue(extension);   // extension (col 8 = H)
           SpreadsheetApp.flush();
           try{ notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension); }catch(e){}
           return { ok:true, updated:true };
@@ -1831,7 +1906,7 @@ function apiSolicitarAcceso(nombre, departamento, extension){
 
     // Si no existe, append con estado PENDIENTE
     // Si faltan columnas, Apps Script las crea al vuelo
-    SH_USR.appendRow([email, nombre, departamento, '', 0, 'PENDIENTE', extension]);
+    SH_USR.appendRow([email, nombre, departamento, '', 0, '', 'PENDIENTE', extension]);
     SpreadsheetApp.flush();
     try{ notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension); }catch(e){}
     return { ok:true, created:true };
@@ -1993,7 +2068,7 @@ function dbg_CheckCreate(fechaStr, salonId, horaInicio, duracionMin){
   const DUR  = Math.max(Number(duracionMin||0), Number(cfg_('DURATION_MIN')||30));
   const hFin = addMinutes_(hIni, DUR);
   const conflicts = getConflicts_(fechaStr, salonId, hIni, hFin);
-  const prio = Number(me.prioridad||0);
+  const prio = effectivePriorityForSalon_(me, salonId);
   const maxPrio = conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)),0);
   return {
     ok:true,
