@@ -62,6 +62,7 @@
           <option value="INACTIVO">INACTIVO</option>
         </select>
         <input id="u-ext" placeholder="Extensión"/>
+        <input id="u-admin" type="number" min="1" placeholder="Administración"/>
       </div>
       <div class="row g" style="margin-top:8px">
         <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
@@ -183,6 +184,9 @@
       nombre: "<?= me && me.nombre ?>",
       departamento: "<?= me && me.departamento ?>",
       extension: "<?= me && me.extension ?>",
+      rol: "<?= me && me.rol ?>",
+      estado: "<?= me && me.estado ?>",
+      administracion_id: "<?= me && me.administracion_id || '' ?>",
       prioridad: <?= Number(me && me.prioridad || 0) ?>,
       prioridad_salones: <?= JSON.stringify(me && me.prioridad_salones || []) ?>,
       prioridadSalones: <?= JSON.stringify(me && me.prioridad_salones || []) ?>,
