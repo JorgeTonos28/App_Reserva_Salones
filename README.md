@@ -58,15 +58,15 @@ distribuir la experiencia a diferentes perfiles.
    `HORARIO_INICIO`, `HORARIO_FIN`, `DURATION_MIN`, `DURATION_MAX`,
    `DURATION_STEP`, etc.).
 3. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
-   definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
-   `INACTIVO`), `prioridad` y el nuevo campo `prioridad_salones`. Este último
-   permite restringir la prioridad a ciertos salones escribiendo sus códigos
-   separados por `;` (ej. `S00004;S00005`). Para los demás espacios la
-   prioridad se tratará como 0. Completa también los campos opcionales como
-   `extension` y, para cuentas con rol `ADMIN`, la columna `admin_salones` con
-   la lista de códigos (separados por `;`) de los salones que podrá gestionar
-   dentro del panel administrativo. Si dejas `admin_salones` vacío el usuario
-   tendrá acceso total a todos los salones de la administración general.
+   definiendo `rol` (`ADMIN1`, `ADMIN2`, `ADMIN3`, …, `SOLICITANTE`), `estado`
+   (`ACTIVO`, `PENDIENTE`, `INACTIVO`), `prioridad` y el campo
+   `prioridad_salones`. Este último permite restringir la prioridad a ciertos
+   salones escribiendo sus códigos separados por `;` (ej. `S00004;S00005`).
+   Para los demás espacios la prioridad se tratará como 0. Completa también los
+   campos opcionales como `extension`. El número que acompaña al rol `ADMIN`
+   determina la administración a la que pertenece el usuario: `ADMIN1` accede a
+   la administración general (Config), `ADMIN2` a la hoja `Config2`, y así
+   sucesivamente.
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
    capacidad, sede y las columnas `restriccion`, `conserje` y `administracion`.
    La columna `restriccion` acepta:

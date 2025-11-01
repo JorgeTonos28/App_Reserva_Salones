@@ -2,40 +2,16 @@
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
 const GLOBAL_CFG = window.__GLOBAL_CFG__ || {};
-
-function normalizeSalonCodeList(value){
-  const seen = {};
-  const out = [];
-  const push = code => {
-    const token = String(code || '').trim().toUpperCase();
-    if (!token || seen[token]) return;
-    seen[token] = true;
-    out.push(token);
-  };
-  if (Array.isArray(value)){
-    value.forEach(push);
-    return out;
-  }
-  if (typeof value === 'string'){
-    value.split(';').forEach(push);
-    return out;
-  }
-  if (value && typeof value === 'object' && typeof value.length === 'number'){
-    Array.prototype.forEach.call(value, push);
-    return out;
-  }
-  return out;
-}
-
-const ADMIN_ALLOWED = new Set(normalizeSalonCodeList(window.__ADMIN_ALLOWED_SALONES__));
 const ADMIN_ALL_ACCESS = !!window.__ADMIN_ALL_ACCESS__;
 const ADMIN_IS_GENERAL = !!window.__ADMIN_IS_GENERAL__;
+const ADMIN_SCOPE_IDS = new Set((window.__ADMIN_SCOPE_IDS__ || []).map(id => Number(id||0) || 0).filter(Boolean));
 
 function adminCanManageSalonFront(salonId){
   if (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL) return true;
-  const code = String(salonId||'').trim().toUpperCase();
-  if (!code) return false;
-  return ADMIN_ALLOWED.has(code);
+  const map = window.__SALON_ADMIN_IDS__ || {};
+  const adminId = Number(map[String(salonId||'')] || 0);
+  if (!adminId) return false;
+  return ADMIN_SCOPE_IDS.has(adminId);
 }
 function getPrioridadSalonesAdmin(){
   const seen = {};
@@ -181,7 +157,9 @@ function setDefaultAdminRange(days=30){
 
 function drawSalones(arr){
   const el = $('#salones');
-  const list = (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL) ? arr : arr.filter(s => adminCanManageSalonFront(s.id));
+  const list = (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL)
+    ? arr
+    : arr.filter(s => s.admin_can_manage || adminCanManageSalonFront(s.id));
   if (!list.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
   const rows = list.map(s=>{
     const meta = parseSalonRestrictionMeta(s.restriccion);
@@ -322,10 +300,10 @@ function aprobarAdmin(id){
 function loadSalones(){ google.script.run
   .withSuccessHandler(r=>{
     const data = ((r&&r.data)||[]);
-    drawSalones(data);
     window.__SALON_CAPS__ = {};
     window.__SALON_META_ADMIN__ = {};
     window.__SALON_CFG_ADMIN__ = {};
+    window.__SALON_ADMIN_IDS__ = {};
     data.forEach(s => {
       window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
       window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
@@ -336,7 +314,9 @@ function loadSalones(){ google.script.run
         DUR_MAX: Number(s.duration_max || GLOBAL_CFG.DUR_MAX || 240),
         DUR_STEP: Number(s.duration_step || GLOBAL_CFG.DUR_STEP || 30)
       };
+      window.__SALON_ADMIN_IDS__[s.id] = Number(s.administracion || 0) || 0;
     });
+    drawSalones(data);
     // === NUEVO: poblar select del formulario Admin si existe ===
     const sel = document.getElementById('a-salon');
       if (sel){
@@ -764,7 +744,10 @@ function openUsuariosModal(){
   let selected = null; // objeto usuario seleccionado
   const draw = (items=[])=>{
     if (!items.length){ listEl.innerHTML = '<p style="padding:10px">No hay usuarios.</p>'; return; }
-    const rows = items.map(u=>`
+    const rows = items.map(u=>{
+      const adminId = Number(u.administracion||0) || 0;
+      const adminLabel = adminId ? `ADMIN${adminId}` : '—';
+      return `
       <tr class="u-row" data-email="${u.email}">
         <td>${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
         <td>${u.departamento||''}</td>
@@ -773,10 +756,10 @@ function openUsuariosModal(){
         <td>${u.prioridad_salones||''}</td>
         <td>${u.estado||''}</td>
         <td>${u.extension||''}</td>
-        <td>${u.admin_salones||''}</td>
-      </tr>
-    `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Salones administración</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <td>${adminLabel}</td>
+      </tr>`;
+    }).join('');
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Administración</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -795,23 +778,10 @@ function openUsuariosModal(){
     });
   };
   const modalMsg = (s)=>{ window.modal(s); };
-  const adminField = document.getElementById('u-admin-salones');
-  const adminFieldRow = adminField ? adminField.parentElement : null;
-  const roleSelect = document.getElementById('u-rol');
-  const syncAdminField = ()=>{
-    if (!adminField) return;
-    const shouldShow = ADMIN_IS_GENERAL && (String(roleSelect?.value||'').toUpperCase() === 'ADMIN');
-    if (adminFieldRow) adminFieldRow.style.display = shouldShow ? '' : 'none';
-    adminField.disabled = !shouldShow;
-    if (!shouldShow) adminField.value = '';
-  };
-  if (roleSelect) roleSelect.addEventListener('change', syncAdminField);
-
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-admin-salones'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-rol'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
-    syncAdminField();
   };
   const fillUserForm = (u)=>{
     document.getElementById('u-email').value = u?.email||'';
@@ -822,8 +792,6 @@ function openUsuariosModal(){
     document.getElementById('u-prio-salones').value = u?.prioridad_salones||'';
     document.getElementById('u-estado').value = u?.estado||'';
     document.getElementById('u-ext').value = u?.extension||'';
-    if (adminField) adminField.value = u?.admin_salones||'';
-    syncAdminField();
   };
   const load = ()=>{
     Busy.show('Cargando usuarios…');
@@ -841,8 +809,7 @@ function openUsuariosModal(){
       prioridad:Number(document.getElementById('u-prio').value||0),
       prioridad_salones: document.getElementById('u-prio-salones').value.trim(),
       estado:   document.getElementById('u-estado').value.trim(),
-      extension:document.getElementById('u-ext').value.trim(),
-      admin_salones: document.getElementById('u-admin-salones').value.trim()
+      extension:document.getElementById('u-ext').value.trim()
     };
     if (!payload.email) return modalMsg('Correo es obligatorio.');
     // Si hay selección y no hay cambios → no-op
@@ -854,8 +821,7 @@ function openUsuariosModal(){
         Number(selected.prioridad||0)===payload.prioridad &&
         (String(selected.prioridad_salones||'').trim()===payload.prioridad_salones) &&
         (selected.estado||'')===payload.estado &&
-        (selected.extension||'')===payload.extension &&
-        (String(selected.admin_salones||'').trim()===payload.admin_salones)){
+        (selected.extension||'')===payload.extension){
       clearUserForm();
       const rows = listEl.querySelectorAll('.u-row'); rows.forEach(x=>x.classList.remove('selected')); selected=null;
       return modalMsg('No hay cambios que guardar.');
@@ -871,7 +837,6 @@ function openUsuariosModal(){
       .apiUpsertUsuario(payload);
   };
   document.getElementById('u-close').onclick = ()=> modal.hidden = true;
-  syncAdminField();
   modal.hidden = false;
   load();
 }

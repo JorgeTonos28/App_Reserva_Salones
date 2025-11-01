@@ -215,9 +215,7 @@ function getUser_(){
     if (!Array.isArray(row.prioridad_salones)){
       row.prioridad_salones = parsePrioridadSalones_(row.prioridad_salones_raw||'');
     }
-    if (!Array.isArray(row.admin_salones)){
-      row.admin_salones = parseSalonCodes_(row.admin_salones_raw||'');
-    }
+    row.admin_role_id = adminRoleIdForUser_(row);
     row.admin_all_access = adminHasFullAccess_(row);
     row.is_general_admin = isGeneralAdminUser_(row);
     row.admin_scope_ids = Array.from(userAdminScopeIds_(row));
@@ -234,8 +232,7 @@ function getUser_(){
     prioridad_salones_raw:'',
     estado:'',
     extension:'',
-    admin_salones:[],
-    admin_salones_raw:'',
+    admin_role_id:0,
     admin_all_access:false,
     is_general_admin:false,
     admin_scope_ids:[],
@@ -247,11 +244,10 @@ function findUserByEmail_(email){
   const lr = SH_USR.getLastRow();
   if (lr<2) return null;
   // lee columnas esperadas (incluye prioridad_salones, estado y extensión)
-  const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
+  const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
   const r = vals.find(v => String(v[0]).trim().toLowerCase()===email.toLowerCase());
   if (!r) return null;
   const prioridadSalonesRaw = String(r[5]||'').trim();
-  const adminSalonesRaw = String(r[8]||'').trim();
   return {
     email:r[0],
     nombre:r[1],
@@ -261,9 +257,7 @@ function findUserByEmail_(email){
     prioridad_salones: parsePrioridadSalones_(prioridadSalonesRaw),
     prioridad_salones_raw: prioridadSalonesRaw,
     estado:String(r[6]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
-    extension:String(r[7]||''),
-    admin_salones: parseSalonCodes_(adminSalonesRaw),
-    admin_salones_raw: adminSalonesRaw
+    extension:String(r[7]||'')
   };
 }
 
@@ -281,71 +275,90 @@ function parsePrioridadSalones_(raw){
     });
 }
 
-function parseSalonCodes_(raw){
-  return parsePrioridadSalones_(raw);
+function parseAdminRoleId_(role){
+  const match = String(role||'').trim().toUpperCase().match(/^ADMIN(\d+)?$/);
+  if (!match) return null;
+  const id = match[1] ? Number(match[1]) : 1;
+  if (!isFinite(id) || id <= 0) return 1;
+  return id;
 }
 
-function adminSalonCodesForUser_(user){
-  if (!user) return [];
-  if (Array.isArray(user.admin_salones)) return user.admin_salones;
-  const raw = user.admin_salones_raw || '';
-  const list = parseSalonCodes_(raw);
-  user.admin_salones = list;
-  return list;
+function isAdminRole_(role){
+  return parseAdminRoleId_(role) !== null;
+}
+
+function adminRoleIdForUser_(user){
+  if (!user) return 0;
+  const id = parseAdminRoleId_(user.rol);
+  return Number(id||0) || 0;
 }
 
 function adminHasFullAccess_(user){
-  if (!user || String(user.rol||'').toUpperCase()!=='ADMIN') return false;
-  const codes = adminSalonCodesForUser_(user);
-  return !codes.length;
+  return isGeneralAdminUser_(user);
+}
+
+function adminSalonCodesForUser_(user){
+  const salones = getSalonesData_();
+  if (!user) return [];
+  if (adminHasFullAccess_(user)){
+    return salones.map(s => String(s.id||'').trim().toUpperCase()).filter(Boolean);
+  }
+  const adminId = adminRoleIdForUser_(user);
+  if (!adminId) return [];
+  return salones
+    .filter(s => Number(s.administracion||1) === adminId)
+    .map(s => String(s.id||'').trim().toUpperCase())
+    .filter(Boolean);
 }
 
 function adminCanManageSalon_(user, salonId){
-  if (!user || String(user.rol||'').toUpperCase()!=='ADMIN') return false;
-  const codes = adminSalonCodesForUser_(user);
-  if (!codes.length) return true;
-  const target = String(salonId||'').trim().toUpperCase();
-  if (!target) return false;
-  return codes.indexOf(target) !== -1;
+  if (!user) return false;
+  if (adminHasFullAccess_(user)) return true;
+  const adminId = adminRoleIdForUser_(user);
+  if (!adminId) return false;
+  const salon = getSalonById_(salonId);
+  if (!salon) return false;
+  return Number(salon.administracion||1) === adminId;
 }
 
 function adminCanManageReservation_(user, reserva){
   if (!user || !reserva) return false;
-  return adminCanManageSalon_(user, reserva.salon_id);
+  if (adminHasFullAccess_(user)) return true;
+  const adminId = adminRoleIdForUser_(user);
+  if (!adminId) return false;
+  const resAdmin = Number(reserva.salon_administracion||1) || 1;
+  return adminId === resAdmin;
 }
 
 function userAdminScopeIds_(user){
   const ids = new Set();
-  if (!user || String(user.rol||'').toUpperCase()!=='ADMIN') return ids;
-  const codes = adminSalonCodesForUser_(user);
-  if (!codes.length){
-    ids.add(1);
+  if (!user) return ids;
+  if (adminHasFullAccess_(user)){
+    const salones = getSalonesData_();
+    salones.forEach(s => ids.add(Number(s.administracion||1) || 1));
+    if (!ids.size) ids.add(1);
     return ids;
   }
-  const salones = getSalonesData_();
-  codes.forEach(code => {
-    const match = salones.find(s => String(s.id||'').trim().toUpperCase() === code);
-    const adm = match ? Number(match.administracion||1) || 1 : 1;
-    ids.add(adm);
-  });
-  if (!ids.size) ids.add(1);
+  const adminId = adminRoleIdForUser_(user);
+  if (adminId) ids.add(adminId);
   return ids;
 }
 
 function isGeneralAdminUser_(user){
-  if (!user || String(user.rol||'').toUpperCase()!=='ADMIN') return false;
-  if (adminHasFullAccess_(user)) return true;
+  if (!user) return false;
+  const id = adminRoleIdForUser_(user);
+  const isActive = String(user.estado||'').toUpperCase() === 'ACTIVO';
+  if (id === 1 && isActive) return true;
   const email = String(user.email||'').toLowerCase();
+  if (!email || !isAdminRole_(user.rol)) return false;
   const generalList = (cfg_('ADMIN_EMAILS')||'').split(';').map(s=>s.trim().toLowerCase()).filter(Boolean);
-  if (generalList.includes(email)) return true;
-  const scopes = userAdminScopeIds_(user);
-  return scopes.has(1);
+  return isActive && generalList.includes(email);
 }
 
 function basePriorityForUser_(user){
   if (!user) return 0;
   const raw = Number(user && user.prioridad || 0);
-  if (user && user.rol === 'ADMIN' && !Number(raw||0)){
+  if (user && isAdminRole_(user.rol) && !Number(raw||0)){
     return 2;
   }
   return Number(raw||0);
@@ -365,15 +378,13 @@ function effectivePriorityForSalon_(user, salonId){
 
 function isAdminEmail_(email){
   if (!email) return false;
+  const lower = String(email||'').toLowerCase();
   const u = findUserByEmail_(email);
-  // Si el usuario existe y NO está ACTIVO → no es admin (aunque esté listado)
   if (u && String(u.estado||'').toUpperCase() !== 'ACTIVO') return false;
-  if (u && u.rol==='ADMIN') return true;  // ADMIN + ACTIVO
+  if (u && isAdminRole_(u.rol)) return true;
   const cfgAdmins = (cfg_('ADMIN_EMAILS')||'').split(';').map(s=>s.trim().toLowerCase()).filter(Boolean);
-  // Si viene por lista de config, también exigir ACTIVO en la hoja (si existe fila)
-  if (cfgAdmins.includes(email.toLowerCase())){
-    // Si no hay fila de usuario, lo tratamos como no activo
-    return !!(u && String(u.estado||'').toUpperCase()==='ACTIVO');
+  if (cfgAdmins.includes(lower)){
+    return !!(u && isAdminRole_(u.rol) && String(u.estado||'').toUpperCase()==='ACTIVO');
   }
   return false;
 }
@@ -474,7 +485,7 @@ function doGet(e){
   }
 
   // 4) Público (solicitante o admin)
-  if (u && (u.rol==='SOLICITANTE' || u.rol==='ADMIN')){
+  if (u && (u.rol==='SOLICITANTE' || isAdminRole_(u.rol))){
     const t = HtmlService.createTemplateFromFile('Public');
     t.appVersion = APP_VERSION;
     t.logoUrl = getLogoDataUrl(128) || getLogoUrl();
@@ -1762,7 +1773,7 @@ function dbg_Send_7AM_Preview(baseYMD, toOverride){
 function setupSheetsAndConfig(){
   const must = [
     {name:'Config', headers:['key','value']},
-    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','prioridad_salones','estado','extension','admin_salones']},
+    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','prioridad_salones','estado','extension']},
     {name:'Conserjes', headers:['codigo','nombre','email','telefono','activo'] },
     {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede','restriccion','conserje','administracion']},
     {name:'Reservas', headers:[
@@ -1862,21 +1873,21 @@ function apiListUsuarios(){
   const me = getUser_();
   if (!isGeneralAdminUser_(me)) return { ok:false, msg:'No autorizado' };
   const lr = SH_USR.getLastRow(); if (lr<2) return { ok:true, data:[] };
-  const vals = SH_USR.getRange(2,1,lr-1,9).getValues(); // email,nombre,departamento,rol,prioridad,prioridad_salones,estado,extension,admin_salones
+  const vals = SH_USR.getRange(2,1,lr-1,8).getValues(); // email,nombre,departamento,rol,prioridad,prioridad_salones,estado,extension
   const data = vals.map(r=>{
     const prioSalonesRaw = String(r[5]||'').trim();
-    const adminSalonesRaw = String(r[8]||'').trim();
+    const role = String(r[3]||'').toUpperCase();
     return {
       email:String(r[0]||'').toLowerCase(),
       nombre:String(r[1]||''),
       departamento:String(r[2]||''),
-      rol:String(r[3]||'').toUpperCase(),
+      rol:role,
       prioridad:Number(r[4]||0),
       prioridad_salones: prioSalonesRaw,
       prioridad_salones_list: parsePrioridadSalones_(prioSalonesRaw),
       estado:String(r[6]||'').toUpperCase(),
       extension:String(r[7]||''),
-      admin_salones: adminSalonesRaw
+      administracion: parseAdminRoleId_(role) || 0
     };
   });
   return { ok:true, data };
@@ -1907,27 +1918,17 @@ function apiUpsertUsuario(u){
   const prioSalonesRaw = prioSalonesList.join(';');
   const est = String(u.estado||'').toUpperCase().trim();
   const ext = String(u.extension||'').trim();
-  let adminSalonesInput = '';
-  if (rol === 'ADMIN'){
-    if (Array.isArray(u.admin_salones)){
-      adminSalonesInput = u.admin_salones.join(';');
-    } else if (typeof u.admin_salones === 'string'){
-      adminSalonesInput = u.admin_salones;
-    }
-  }
-  const adminSalonesList = parseSalonCodes_(adminSalonesInput);
-  const adminSalonesRaw = adminSalonesList.join(';');
   const lr = SH_USR.getLastRow();
   if (lr>=2){
-    const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
+    const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
     for (let i=0;i<vals.length;i++){
       if (String(vals[i][0]).toLowerCase().trim()===email){
-        SH_USR.getRange(i+2,2,1,8).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminSalonesRaw]]);
+        SH_USR.getRange(i+2,2,1,7).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext]]);
         return { ok:true, updated:true };
       }
     }
   }
-  SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminSalonesRaw]);
+  SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext]);
   return { ok:true, created:true };
 }
 

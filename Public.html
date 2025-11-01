@@ -192,8 +192,7 @@
       prioridad_salones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
       prioridadSalones: <?= JSON.stringify(me.prioridad_salones || []) ?>,
       prioridad_salones_raw: "<?= me.prioridad_salones_raw || '' ?>",
-      admin_salones: <?= JSON.stringify(me.admin_salones || []) ?>,
-      admin_salones_raw: "<?= me.admin_salones_raw || '' ?>",
+      admin_role_id: <?= Number(me.admin_role_id || 0) ?>,
       admin_all_access: <?= me.admin_all_access ? 'true' : 'false' ?>,
       admin_scope_ids: <?= JSON.stringify(me.admin_scope_ids || []) ?>,
       is_general_admin: <?= me.is_general_admin ? 'true' : 'false' ?>
