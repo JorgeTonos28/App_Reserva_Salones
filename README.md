@@ -53,25 +53,56 @@ distribuir la experiencia a diferentes perfiles.
 1. Duplicar la hoja de cálculo original y ajustar los datos base en cada pestaña.
 2. En `Config`, completar las claves utilizadas por el script (`ADMIN_EMAILS`,
    `HORARIO_INICIO`, `HORARIO_FIN`, `DURATION_MIN`, `DURATION_MAX`,
-   `DURATION_STEP`, etc.).
+   `DURATION_STEP`, etc.). Esta hoja representa la **administración general**
+   (ID `1`).
 3. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
    definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
-   `INACTIVO`), `prioridad` y el nuevo campo `prioridad_salones`. Este último
-   permite restringir la prioridad a ciertos salones escribiendo sus códigos
-   separados por `;` (ej. `S00004;S00005`). Para los demás espacios la
-   prioridad se tratará como 0. Completa también los campos opcionales como
-   `extension` cuando apliquen.
+   `INACTIVO`), `prioridad`, el campo `prioridad_salones` y el nuevo
+   `administracion_id` (columna `I`). El `administracion_id` determina a qué
+   administración pertenece cada usuario. Para mantener compatibilidad, llena
+   `1` para los administradores generales que gobiernan la configuración
+   original. `prioridad_salones` permite restringir la prioridad a ciertos
+   salones escribiendo sus códigos separados por `;` (ej. `S00004;S00005`).
+   Completa también los campos opcionales como `extension` cuando apliquen.
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
-   capacidad, sede y la columna `restriccion`. Este último campo acepta:
-   - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
-     horarios específicos (por ejemplo `11:00-14:00;08:00-09:00`).
-   - El valor `CONFIRM` (o `COFNIRM`) para forzar que las solicitudes entren en
-     estado `PENDIENTE` y requieran aprobación manual.
+   capacidad, sede y la columna `restriccion`. Añade también `administracion_id`
+   (columna `G`) para indicar qué administración gobierna el salón (por defecto
+   `1`) y `requiere_conserje` (columna `H`) para definir si debe solicitar
+   conserje después de las 4:00 p. m. El campo `restriccion` acepta:
+ - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
+    horarios específicos (por ejemplo `11:00-14:00;08:00-09:00`).
+  - El valor `CONFIRM` (o `COFNIRM`) para forzar que las solicitudes entren en
+    estado `PENDIENTE` y requieran aprobación manual.
 5. Verificar la pestaña `Reservas` para asegurar que las columnas coinciden con
    la estructura consumida por el backend (ID, solicitante, fechas, horarios,
-   estado, etc.).
+   estado, etc.). El script espera una columna adicional `administracion_id`
+   (posición 24) que se completa automáticamente con la administración del
+   salón seleccionado al crear la reserva.
 6. Personalizar los archivos HTML y CSS si se requiere adaptar la identidad
    gráfica corporativa.
+
+### Administraciones paralelas por salón
+
+- Para delegar la operación de un grupo de salones a un equipo alterno, crea
+  una hoja adicional llamada `Config2`, `Config3`, etc. Cada hoja debe incluir
+  únicamente las claves soportadas: `ADMIN_EMAILS`, `HORARIO_INICIO`,
+  `HORARIO_FIN`, `DURATION_MIN`, `DURATION_STEP`, `DURATION_MAX`,
+  `MAIL_SENDER_NAME`, `MAIL_REPLY_TO`, `ADMIN_CONTACT_NAME`,
+  `ADMIN_CONTACT_EMAIL` y `ADMIN_CONTACT_EXTENSION`.
+- Asigna el `administracion_id` correspondiente tanto a los usuarios del equipo
+  (en la pestaña `Usuarios`) como a los salones que atenderán (en la pestaña
+  `Salones`). El valor debe coincidir con el sufijo de la hoja de configuración
+  (`1` usa `Config`, `2` usa `Config2`, etc.).
+- Los administradores generales (administración `1`) mantienen la capacidad de
+  gestionar usuarios y conserjes mediante los botones del panel. Las
+  administraciones alternas tendrán acceso únicamente a los salones asociados y
+  a su historial de reservas.
+- El flujo público y el formulario de solicitudes siguen mostrando todos los
+  salones disponibles, sin importar la administración asignada. Las reservas
+  creadas conservarán el `administracion_id` del salón para mantener los filtros
+  y notificaciones consistentes.
+- Cuando un salón tenga `requiere_conserje = "NO"`, las reservas confirmadas
+  después de las 4:00 p. m. no generarán solicitudes de asignación de conserje.
 
 ## Despliegue como Web App
 

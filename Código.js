@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.7-2025-11-05';
+const APP_VERSION = 'salones-v10.1-2025-11-06';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -141,6 +141,104 @@ function cfg_(key){
   return r ? String(r[1]).trim() : '';
 }
 
+const ADMIN_ALT_CFG_KEYS = Object.freeze({
+  ADMIN_EMAILS:true,
+  HORARIO_INICIO:true,
+  HORARIO_FIN:true,
+  DURATION_MIN:true,
+  DURATION_STEP:true,
+  DURATION_MAX:true,
+  MAIL_SENDER_NAME:true,
+  MAIL_REPLY_TO:true,
+  ADMIN_CONTACT_NAME:true,
+  ADMIN_CONTACT_EMAIL:true,
+  ADMIN_CONTACT_EXTENSION:true
+});
+
+const __ADMIN_CFG_CACHE__ = {};
+const __ADMIN_RUNTIME_CACHE__ = {};
+
+function normalizeAdminId_(id){
+  const raw = String(id || '').trim();
+  if (!raw) return '1';
+  const num = Number(raw);
+  if (isFinite(num) && num > 0){
+    return String(Math.floor(num));
+  }
+  return raw;
+}
+
+function cfgSheetLookup_(sheetName, key){
+  const cacheKey = sheetName + '::' + key;
+  if (cacheKey in __ADMIN_CFG_CACHE__) return __ADMIN_CFG_CACHE__[cacheKey];
+  const sh = SS.getSheetByName(sheetName);
+  if (!sh){
+    __ADMIN_CFG_CACHE__[cacheKey] = '';
+    return '';
+  }
+  const lr = sh.getLastRow();
+  if (lr < 2){
+    __ADMIN_CFG_CACHE__[cacheKey] = '';
+    return '';
+  }
+  const vals = sh.getRange(2,1,lr-1,2).getValues();
+  const row = vals.find(v => String(v[0]).trim() === key);
+  const val = row ? String(row[1]).trim() : '';
+  __ADMIN_CFG_CACHE__[cacheKey] = val;
+  return val;
+}
+
+function adminConfigSheetName_(adminId){
+  const id = normalizeAdminId_(adminId);
+  if (id === '1') return 'Config';
+  return 'Config' + id;
+}
+
+function cfgForAdmin_(adminId, key){
+  const normKey = String(key || '').trim();
+  if (!normKey) return '';
+  const id = normalizeAdminId_(adminId);
+  if (!ADMIN_ALT_CFG_KEYS[normKey] || id === '1'){
+    return cfg_(normKey);
+  }
+  const sheetName = adminConfigSheetName_(id);
+  if (!sheetName) return cfg_(normKey);
+  const raw = cfgSheetLookup_(sheetName, normKey);
+  return raw !== '' ? raw : cfg_(normKey);
+}
+
+function getAdminRuntimeCfg_(adminId){
+  const id = normalizeAdminId_(adminId);
+  if (__ADMIN_RUNTIME_CACHE__[id]) return __ADMIN_RUNTIME_CACHE__[id];
+  const horarioInicio = normHHMM_(cfgForAdmin_(id, 'HORARIO_INICIO') || '07:00') || '07:00';
+  const horarioFin    = normHHMM_(cfgForAdmin_(id, 'HORARIO_FIN')    || '20:00') || '20:00';
+  const durMin  = Number(cfgForAdmin_(id, 'DURATION_MIN')  || cfg_('DURATION_MIN')  || 30) || 30;
+  const durMax  = Number(cfgForAdmin_(id, 'DURATION_MAX')  || cfg_('DURATION_MAX')  || 240) || 240;
+  const durStep = Number(cfgForAdmin_(id, 'DURATION_STEP') || cfg_('DURATION_STEP') || 30) || 30;
+  const cfgObj = {
+    horarioInicio,
+    horarioFin,
+    duracionMin: Math.max(1, durMin),
+    duracionMax: Math.max(Math.max(1, durMin), durMax),
+    duracionStep: Math.max(1, durStep)
+  };
+  __ADMIN_RUNTIME_CACHE__[id] = cfgObj;
+  return cfgObj;
+}
+
+function adminScopeForUser_(user){
+  if (!user) return '1';
+  const raw = user.administracion_id || user.admin_id || user.adminScope || '';
+  return normalizeAdminId_(raw);
+}
+
+function isGeneralAdminUser_(user){
+  if (!user) return false;
+  if (String(user.rol||'').toUpperCase() !== 'ADMIN') return false;
+  if (String(user.estado||'').toUpperCase() !== 'ACTIVO') return false;
+  return adminScopeForUser_(user) === '1';
+}
+
 function isPublicoExternoOMixto_(tipo){
   const t = String(tipo||'').trim().toUpperCase();
   return t === 'EXTERNO' || t === 'MIXTO';
@@ -178,6 +276,7 @@ function getUser_(){
     prioridad_salones:[],
     prioridad_salones_raw:'',
     estado:'',
+    administracion_id:'1',
     _exists:false
   };
 }
@@ -186,10 +285,11 @@ function findUserByEmail_(email){
   const lr = SH_USR.getLastRow();
   if (lr<2) return null;
   // lee columnas esperadas (incluye prioridad_salones, estado y extensión)
-  const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
+  const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
   const r = vals.find(v => String(v[0]).trim().toLowerCase()===email.toLowerCase());
   if (!r) return null;
   const prioridadSalonesRaw = String(r[5]||'').trim();
+  const adminId = normalizeAdminId_(r[8]||'1');
   return {
     email:r[0],
     nombre:r[1],
@@ -199,7 +299,8 @@ function findUserByEmail_(email){
     prioridad_salones: parsePrioridadSalones_(prioridadSalonesRaw),
     prioridad_salones_raw: prioridadSalonesRaw,
     estado:String(r[6]||'').toUpperCase(),       // NUEVO (PENDIENTE/ACTIVO/INACTIVO)
-    extension:String(r[7]||'')             // NUEVO
+    extension:String(r[7]||''),             // NUEVO
+    administracion_id: adminId
   };
 }
 
@@ -389,24 +490,83 @@ function doGet(e){
 function include_(fn){ return HtmlService.createHtmlOutputFromFile(fn).getContent(); }
 
 // ========= Salones =========
-function apiListSalones(){
+let __SALONES_CACHE__ = null;
+let __SALONES_MAP__ = null;
+
+function salonesCache_(){
+  if (__SALONES_CACHE__) return __SALONES_CACHE__;
   const lr = SH_SAL.getLastRow();
-  const rows = lr<2? [] : SH_SAL.getRange(2,1,lr-1,6).getValues();
-  const data = rows.map(r=>({
-    id: r[0],
-    nombre: r[1],
-    capacidad: Number(r[2]||0),
-    habilitado: String(r[3]||'').toUpperCase()==='SI',
-    sede: r[4]||'',
-    restriccion: String(r[5]||'').trim()
-  }));
+  const rows = lr<2? [] : SH_SAL.getRange(2,1,lr-1,8).getValues();
+  const data = rows.map(r=>{
+    const adminId = normalizeAdminId_(r[6]||'1');
+    const adminCfg = getAdminRuntimeCfg_(adminId);
+    const requiereConserje = String(r[7]||'').toUpperCase()==='NO' ? 'NO' : 'SI';
+    return {
+      id: r[0],
+      nombre: r[1],
+      capacidad: Number(r[2]||0),
+      habilitado: String(r[3]||'').toUpperCase()==='SI',
+      sede: r[4]||'',
+      restriccion: String(r[5]||'').trim(),
+      administracion_id: adminId,
+      requiere_conserje: requiereConserje,
+      horario_inicio: adminCfg.horarioInicio,
+      horario_fin: adminCfg.horarioFin,
+      duracion_min: adminCfg.duracionMin,
+      duracion_max: adminCfg.duracionMax,
+      duracion_step: adminCfg.duracionStep
+    };
+  });
+  __SALONES_CACHE__ = data;
+  __SALONES_MAP__ = {};
+  data.forEach(s => { __SALONES_MAP__[s.id] = s; });
+  return data;
+}
+
+function salonesMap_(){
+  if (!__SALONES_MAP__) salonesCache_();
+  return __SALONES_MAP__ || {};
+}
+
+function invalidateSalonesCache_(){
+  __SALONES_CACHE__ = null;
+  __SALONES_MAP__ = null;
+}
+
+function apiListSalones(){
+  const data = salonesCache_().map(s => ({ ...s }));
   return { ok:true, data };
 }
+
+function apiListSalonesAdmin(){
+  const me = getUser_();
+  if (!isAdminEmail_((me && me.email) || '')) return { ok:false, msg:'No autorizado' };
+  const all = salonesCache_();
+  const scope = adminScopeForUser_(me);
+  const manage = scope === '1'
+    ? all.slice()
+    : all.filter(s => String(s.administracion_id||'1') === scope);
+  return { ok:true, data:{ manage: manage.map(s => ({...s})), all: all.map(s => ({...s})) } };
+}
+
 function apiToggleSalon(salonId, habilitar){
+  const me = getUser_();
+  if (!me || String(me.rol||'').toUpperCase()!=='ADMIN' || String(me.estado||'').toUpperCase()!=='ACTIVO'){
+    return {ok:false,msg:'No autorizado'};
+  }
+  const scope = adminScopeForUser_(me);
   const lr = SH_SAL.getLastRow(); if (lr<2) return {ok:false,msg:'No hay salones'};
-  const rows = SH_SAL.getRange(2,1,lr-1,5).getValues();
+  const rows = SH_SAL.getRange(2,1,lr-1,8).getValues();
   for (let i=0;i<rows.length;i++){
-    if (rows[i][0]===salonId){ SH_SAL.getRange(i+2,4).setValue(habilitar?'SI':'NO'); return {ok:true}; }
+    if (rows[i][0]===salonId){
+      const adminId = normalizeAdminId_(rows[i][6]||'1');
+      if (scope !== '1' && scope !== adminId){
+        return {ok:false, msg:'No autorizado para este salón'};
+      }
+      SH_SAL.getRange(i+2,4).setValue(habilitar?'SI':'NO');
+      invalidateSalonesCache_();
+      return {ok:true};
+    }
   }
   return {ok:false,msg:'Salón no encontrado'};
 }
@@ -418,12 +578,17 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     fechaStr = String(fechaStr || '').slice(0, 10);
     salonId  = String(salonId || '').trim();
 
+    const salon = getSalonById_(salonId);
+    if (!salon) return { ok:true, data: [] };
+    const adminId = salon.administracion_id || '1';
+    const runtimeCfg = getAdminRuntimeCfg_(adminId);
+
     // Lee config y SANEAMOS todo (trim/valores por defecto)
-    var cfgIni = (cfg_('HORARIO_INICIO') || '07:00');       cfgIni = String(cfgIni).trim();
-    var cfgFin = (cfg_('HORARIO_FIN')    || '20:00');       cfgFin = String(cfgFin).trim();
-    var cfgStep= Number(String(cfg_('DURATION_STEP')||'30').trim());
-    var cfgMin = Number(String(cfg_('DURATION_MIN') ||'30').trim());
-    var cfgMax = Number(String(cfg_('DURATION_MAX') ||'240').trim());
+    var cfgIni = String(runtimeCfg.horarioInicio||'07:00').trim();
+    var cfgFin = String(runtimeCfg.horarioFin||'20:00').trim();
+    var cfgStep= Number(runtimeCfg.duracionStep||30);
+    var cfgMin = Number(runtimeCfg.duracionMin||30);
+    var cfgMax = Number(runtimeCfg.duracionMax||240);
 
     var HINI = (/^\d{2}:\d{2}$/.test(cfgIni) ? cfgIni : '07:00');
     var HFIN = (/^\d{2}:\d{2}$/.test(cfgFin) ? cfgFin : '20:00');
@@ -460,7 +625,6 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     if (!slots.length) return { ok:true, data: [] };
 
     // --- Restricciones del salón ---
-    const salon = getSalonById_(salonId);
     const restr = parseSalonRestriction_(salon && salon.restriccion);
     const restrictedIntervals = restr.intervals || [];
     const conflictStates = restr.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
@@ -567,11 +731,21 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
       return { ok:true, disponible:false };
     }
 
+    const salon = getSalonById_(salonId);
+    if (!salon) return { ok:true, disponible:false };
+    const adminId = salon.administracion_id || '1';
+    const runtimeCfg = getAdminRuntimeCfg_(adminId);
+
     // Normaliza ventana para no permitir fuera de horario
-    var cfgIni = String(cfg_('HORARIO_INICIO')||'07:00').trim();
-    var cfgFin = String(cfg_('HORARIO_FIN')||'20:00').trim();
+    var cfgIni = String(runtimeCfg.horarioInicio||'07:00').trim();
+    var cfgFin = String(runtimeCfg.horarioFin||'20:00').trim();
     var HINI   = (/^\d{2}:\d{2}$/.test(cfgIni)? cfgIni : '07:00');
     var HFIN   = (/^\d{2}:\d{2}$/.test(cfgFin)? cfgFin : '20:00');
+
+    const minDur = Math.max(1, Number(runtimeCfg.duracionMin||1));
+    const maxDur = Math.max(minDur, Number(runtimeCfg.duracionMax||minDur));
+    if (dur < minDur) dur = minDur;
+    if (dur > maxDur) dur = maxDur;
 
     var hIni = normHHMM_(horaInicio);
     if (!fechaStr || !salonId || !hIni || !dur){
@@ -585,7 +759,6 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
       return { ok:true, disponible:false };
     }
 
-    const salon = getSalonById_(salonId);
     const restr = parseSalonRestriction_(salon && salon.restriccion);
     const restricted = (restr.intervals||[]).some(function(it){
       return !(toMin_(horaFin) <= it.iniMin || toMin_(hIni) >= it.finMin);
@@ -631,6 +804,8 @@ function apiCrearReserva(payload){
     if (!sal) return {ok:false, msg:'Salón inválido.'};
     if (!sal.habilitado) return {ok:false, msg:'Este salón está deshabilitado temporalmente.'};
     const restrSalon = parseSalonRestriction_(sal.restriccion);
+    const adminId = sal.administracion_id || '1';
+    const runtimeCfg = getAdminRuntimeCfg_(adminId);
 
     const cant = Number(payload.cant_personas || 0);
     if (!isFinite(cant) || cant < 1) return {ok:false, msg:'Indica la cantidad de personas (número válido).'};
@@ -646,14 +821,17 @@ function apiCrearReserva(payload){
     const horaIni   = normHHMM_((horaIniIn.length<=5?horaIniIn:horaIniIn.slice(0,5)));
     if (!horaIni) return {ok:false, msg:'Hora de inicio inválida.'};
 
-    const DUR = Math.max(Number(payload.duracion_min||0), Number(cfg_('DURATION_MIN')||30));
-    if (!isFinite(DUR) || DUR < 1) return {ok:false, msg:'Duración inválida.'};
+    const cfgDurMin = Math.max(1, Number(runtimeCfg.duracionMin||30));
+    const cfgDurMax = Math.max(cfgDurMin, Number(runtimeCfg.duracionMax||cfgDurMin));
+    let DUR = Number(payload.duracion_min||0);
+    if (!isFinite(DUR) || DUR < cfgDurMin) DUR = cfgDurMin;
+    if (DUR > cfgDurMax) DUR = cfgDurMax;
 
     const horaFin = addMinutes_(horaIni, DUR);
 
     // ---- Ventana de horario (07:00–20:00 y última hora de inicio 19:00)
-    const HINI = normHHMM_(cfg_('HORARIO_INICIO') || '07:00') || '07:00';
-    const HFIN = normHHMM_(cfg_('HORARIO_FIN')    || '20:00') || '20:00';
+    const HINI = normHHMM_(runtimeCfg.horarioInicio || '07:00') || '07:00';
+    const HFIN = normHHMM_(runtimeCfg.horarioFin    || '20:00') || '20:00';
 
     const iniMin = toMin_(horaIni);
     const finMin = toMin_(horaFin);
@@ -670,7 +848,8 @@ function apiCrearReserva(payload){
     }
 
     // ---- Conserje (>= 16:00 cualquiera de los extremos)
-    const conserjeReq = (iniMin >= toMin_('16:00') || finMin > toMin_('16:00')) ? 'SI' : 'NO';
+    const requiereConserjeSalon = String(sal.requiere_conserje||'SI').toUpperCase() !== 'NO';
+    const conserjeReq = (requiereConserjeSalon && (iniMin >= toMin_('16:00') || finMin > toMin_('16:00'))) ? 'SI' : 'NO';
 
     // ---- Conflictos / prioridad
     // Prioridad del solicitante considerando salones permitidos (admins sin prioridad explícita => 2)
@@ -729,7 +908,7 @@ function apiCrearReserva(payload){
       id, token, estadoInicial, fecha, horaIni, horaFin, sal.id, sal.nombre,
       cant, emailUso, (payload.nombre||me.nombre||''), (payload.departamento||me.departamento||''),
       String(payload.extension||''), String(payload.evento_nombre||''), String(payload.publico_tipo||''),
-      prioSolic, conserjeReq, 'NO', ts, ts, '', ''
+      prioSolic, conserjeReq, 'NO', ts, ts, '', '', '', adminId
     ]);
 
     if (restrSalon.requiresApproval){
@@ -748,18 +927,11 @@ function apiCrearReserva(payload){
 }
 
 function getSalonById_(id){
-  const lr = SH_SAL.getLastRow(); if (lr<2) return null;
-  const rows = SH_SAL.getRange(2,1,lr-1,6).getValues();
-  const r = rows.find(v=>v[0]===id);
-  if (!r) return null;
-  return {
-    id: r[0],
-    nombre: r[1],
-    capacidad: Number(r[2]||0),
-    habilitado: String(r[3]||'').toUpperCase()==='SI',
-    sede: r[4]||'',
-    restriccion: String(r[5]||'').trim()
-  };
+  const map = salonesMap_();
+  const rec = map[String(id||'')] || null;
+  if (!rec) return null;
+  // devolver copia para evitar mutaciones externas
+  return { ...rec };
 }
 
 function parseSalonRestriction_(raw){
@@ -789,7 +961,7 @@ function parseSalonRestriction_(raw){
 
 function getConflicts_(fecha, salonId, ini, fin, estados){
   const lr = SH_RES.getLastRow(); if (lr<2) return [];
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
 
   const iniMin = toMin_(normHHMM_(ini));
   const finMin = toMin_(normHHMM_(fin));
@@ -826,7 +998,7 @@ function apiListMisReservas(fechaDesde, fechaHasta){
   const me = getUser_();
   const myEmail = String(me && me.email || '').toLowerCase();
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:true, data:[]};
-  const lc = Math.max(23, SH_RES.getLastColumn());              // 👈 asegura leer col 23
+  const lc = Math.max(24, SH_RES.getLastColumn());              // 👈 asegura leer col 24
   const rows = SH_RES.getRange(2,1,lr-1,lc).getValues();
 
   const d1 = fechaDesde ? toDate_(fechaDesde) : new Date(2000,0,1);
@@ -855,11 +1027,16 @@ function apiListMisReservas(fechaDesde, fechaHasta){
 }
 
 function apiListReservasAdmin(fechaDesde, fechaHasta){
+  const me = getUser_();
+  if (!isAdminEmail_((me && me.email) || '')) return {ok:false, msg:'No autorizado'};
+  const scope = adminScopeForUser_(me);
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:true, data:[]};
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const d1 = fechaDesde ? toDate_(fechaDesde) : new Date(2000,0,1);
   const d2 = fechaHasta ? toDate_(fechaHasta) : new Date(2100,0,1);
-  let data = rows.filter(r => { const d=toDate_(r[3]); return d>=d1 && d<=d2; })
+  let data = rows
+    .filter(r => { const d=toDate_(r[3]); return d>=d1 && d<=d2; })
+    .filter(r => scope==='1' || normalizeAdminId_(r[23]||'1') === scope)
     .map(r => toReservaObj_(r));
   const cmap = conserjeMap_();
   data = data.map(x => ({ ...x, conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || '' }));
@@ -887,14 +1064,15 @@ function toReservaObj_(r){
     actualizado_en: tsCell_(r[19]),         // ✅ string seguro
     cancelado_por:String(r[20]||''),
     cancelado_motivo:String(r[21]||''),
-    conserje_codigo_asignado:String(r[22]||'')
+    conserje_codigo_asignado:String(r[22]||''),
+    administracion_id: normalizeAdminId_(r[23]||'1')
   };
 }
 
 function apiCancelarReservaByToken(token, motivo){
   if (!token) return { ok:false, msg:'Token inválido' };
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:false,msg:'No hay reservas'};
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   for (let i=0;i<rows.length;i++){
     if (rows[i][1]===token){
       if (String(rows[i][2]).toUpperCase()==='CANCELADA') return {ok:false,msg:'Ya estaba cancelada'};
@@ -912,11 +1090,16 @@ function apiCancelarReservaByToken(token, motivo){
 
 function apiCancelarReservaAdmin(id, motivo){
   const me = (Session.getActiveUser().getEmail()||'');
+  const user = getUser_();
   if (!isAdminEmail_(me)) return {ok:false,msg:'No autorizado'};
 
   // Guardarrail: hasta 30 min antes del inicio
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
+  const scope = adminScopeForUser_(user);
+  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+    return {ok:false, msg:'No autorizado para este salón'};
+  }
   const estado = String(r.estado).toUpperCase();
   if (estado==='CANCELADA') return {ok:false,msg:'La reserva ya está cancelada'};
   if (estado!=='PENDIENTE'){
@@ -933,9 +1116,14 @@ function apiCancelarReservaAdmin(id, motivo){
 
 function apiAprobarReservaAdmin(id){
   const me = (Session.getActiveUser().getEmail()||'');
+  const user = getUser_();
   if (!isAdminEmail_(me)) return {ok:false,msg:'No autorizado'};
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
+  const scope = adminScopeForUser_(user);
+  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+    return {ok:false, msg:'No autorizado para este salón'};
+  }
   const estado = String(r.estado||'').toUpperCase();
   if (estado === 'CANCELADA') return {ok:false,msg:'La reserva está cancelada'};
   if (estado === 'APROBADA') return {ok:true, already:true};
@@ -947,7 +1135,7 @@ function apiAprobarReservaAdmin(id){
 
 function cancelReservaById_(id, motivo, who){
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:false,msg:'No hay reservas'};
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   for (let i=0;i<rows.length;i++){
     if (rows[i][0]===id){
       if (String(rows[i][2]).toUpperCase()==='CANCELADA') return {ok:false,msg:'Ya estaba cancelada'};
@@ -966,6 +1154,7 @@ function cancelReservaById_(id, motivo, who){
 // ========= Emails =========
 function sendEmailConfirmacion_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
   const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
   const subj = `Reserva confirmada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
@@ -986,20 +1175,22 @@ function sendEmailConfirmacion_(reservaId){
       emailParagraph_(`¿Ya no necesitas este espacio? Puedes cancelar la reserva con el botón.`),
     ctaUrl: cancelUrl,
     ctaLabel: 'Cancelar reserva',
-    footer: 'Si tienes dudas, responde a este correo o contacta al equipo de coordinación.'
+    footer: 'Si tienes dudas, responde a este correo o contacta al equipo de coordinación.',
+    adminId
   });
-  
+
   MailApp.sendEmail({
     to: r.solicitante_email,
     subject: subj,
     htmlBody: html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
 function sendEmailCancelacion_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   const subj = `Reserva cancelada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
   const appUrl = normalizeExecUrl_(base);
@@ -1012,25 +1203,27 @@ function sendEmailCancelacion_(reservaId){
     title: 'Reserva cancelada',
     preheader: `Se canceló la reserva de ${r.salon_nombre} para el ${fmtDMY_(r.fecha)}.`,
     htmlInner:
-      emailParagraph_(`Se canceló la reserva del salón <b>${escapeHtml_(r.salon_nombre)}</b> para el <b>${escapeHtml_(fmtDMY_(r.fecha))}</b> a las <b>${escapeHtml_(fmt12_(r.hora_inicio))}</b> – lamentamos los inconvenientes.`) +
+    emailParagraph_(`Se canceló la reserva del salón <b>${escapeHtml_(r.salon_nombre)}</b> para el <b>${escapeHtml_(fmtDMY_(r.fecha))}</b> a las <b>${escapeHtml_(fmt12_(r.hora_inicio))}</b> – lamentamos los inconvenientes.`) +
       emailParagraph_(`<b>Motivo:</b> ${escapeHtml_(softMotivo)}`) +
       emailParagraph_('Si aún necesitas el espacio, puedes realizar una nueva reserva desde el sistema.'),
     ctaUrl: appUrl,
     ctaLabel: 'Hacer nueva reserva',
-    footer: 'Si esto fue un error, crea una nueva reserva o contacta a administración.'
+    footer: 'Si esto fue un error, crea una nueva reserva o contacta a administración.',
+    adminId
   });
 
   MailApp.sendEmail({
     to: r.solicitante_email,
     subject: subj,
     htmlBody: html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
 function sendEmailPendiente_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
   const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
   const subj = `Reserva pendiente – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
@@ -1048,25 +1241,27 @@ function sendEmailPendiente_(reservaId){
         ['Evento', r.evento_nombre||''],
         ['Asistentes', String(r.cant_personas||0)],
         ['Público', r.publico_tipo||'']
-      ]) +
+    ]) +
       emailParagraph_('Si ya no necesitas el espacio puedes cancelar la solicitud con el botón.') +
       disclaimer,
     ctaUrl: cancelUrl,
     ctaLabel: 'Cancelar solicitud',
-    footer: 'La administración revisará tu solicitud y recibirás un correo con la decisión.'
+    footer: 'La administración revisará tu solicitud y recibirás un correo con la decisión.',
+    adminId
   });
 
   MailApp.sendEmail({
     to: r.solicitante_email,
     subject: subj,
     htmlBody: html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
 function sendEmailAprobacion_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
   const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
   const subj = `Reserva aprobada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
@@ -1083,25 +1278,27 @@ function sendEmailAprobacion_(reservaId){
         ['Evento', r.evento_nombre||''],
         ['Asistentes', String(r.cant_personas||0)],
         ['Público', r.publico_tipo||'']
-      ]) +
+    ]) +
       emailParagraph_('Si necesitas desistir de la reserva puedes cancelarla desde el sistema con el botón.'),
     ctaUrl: cancelUrl,
     ctaLabel: 'Cancelar reserva',
-    footer: 'Gracias por utilizar el sistema de reservas.'
+    footer: 'Gracias por utilizar el sistema de reservas.',
+    adminId
   });
 
   MailApp.sendEmail({
     to: r.solicitante_email,
     subject: subj,
     htmlBody: html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
 function notifyAdminReservaPendiente_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
-  const toList = (cfg_('ADMIN_EMAILS') || cfg_('ADMIN_CONTACT_EMAIL') || '')
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
+  const toList = (cfgForAdmin_(adminId, 'ADMIN_EMAILS') || cfgForAdmin_(adminId, 'ADMIN_CONTACT_EMAIL') || '')
     .split(';').map(s=>s.trim()).filter(Boolean);
   if (!toList.length) return;
   const subj = `Pendiente de aprobación – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
@@ -1122,20 +1319,22 @@ function notifyAdminReservaPendiente_(reservaId){
     htmlInner: intro + details + reminder,
     ctaUrl: adminPanelUrl_(),
     ctaLabel: 'Abrir panel administrativo',
-    footer: 'Gracias por gestionar las solicitudes restringidas.'
+    footer: 'Gracias por gestionar las solicitudes restringidas.',
+    adminId
   });
 
   MailApp.sendEmail({
     to: toList.join(','),
     subject: subj,
     htmlBody: html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
 function notificarConserjeria_(reservaId){
   const r = getReservaById_(reservaId); if (!r || String(r.conserje_requerido)!=='SI') return;
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   // Correos de Conserjería desde Config (separados por ;)
   const to = (cfg_('CONSERJERIA_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean).join(',');
   if (!to) return;
@@ -1183,22 +1382,23 @@ function notificarConserjeria_(reservaId){
     htmlInner: intro + details + checklist,
     ctaUrl: appUrl,
     ctaLabel: 'Asignar conserje ahora',
-    footer: 'Gracias por su apoyo logístico.'
+    footer: 'Gracias por su apoyo logístico.',
+    adminId
   });
 
   MailApp.sendEmail({
     to,
     subject: subj,
     htmlBody: htmlWithCta,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
   setReservaField_(r.id, 'conserje_notificado', 'SI');
 }
 
 function getReservaById_(id){
   const lr = SH_RES.getLastRow(); if (lr<2) return null;
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const r = rows.find(v=>v[0]===id);
   return r ? toReservaObj_(r) : null;
 }
@@ -1208,7 +1408,7 @@ function apiGetReservaByToken(token){
   token = String(token||'').trim();
   if (!token) return { ok:false, msg:'Token inválido' };
   const lr = SH_RES.getLastRow(); if (lr<2) return { ok:false, msg:'No hay reservas' };
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   for (let i=0;i<rows.length;i++){
     if (String(rows[i][1]||'') === token){
       return { ok:true, data: toReservaObj_(rows[i]) };
@@ -1221,11 +1421,11 @@ function setReservaField_(id, field, value){
   const colIdx = {
     estado:3, fecha:4, hora_inicio:5, hora_fin:6, salon_id:7, salon_nombre:8, cant_personas:9,
     solicitante_email:10, solicitante_nombre:11, departamento:12, extension:13, evento_nombre:14, publico_tipo:15,
-    prioridad:16, conserje_requerido:17, conserje_notificado:18, creado_en:19, actualizado_en:20, cancelado_por:21, cancelado_motivo:22, conserje_codigo_asignado:23
+    prioridad:16, conserje_requerido:17, conserje_notificado:18, creado_en:19, actualizado_en:20, cancelado_por:21, cancelado_motivo:22, conserje_codigo_asignado:23, administracion_id:24
   };
   const c = colIdx[field]; if (!c) return;
   const lr = SH_RES.getLastRow(); if (lr<2) return;
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   for (let i=0;i<rows.length;i++){ if (rows[i][0]===id){ SH_RES.getRange(i+2,c).setValue(value); SH_RES.getRange(i+2,20).setValue(nowStr_()); break; } }
 }
 
@@ -1245,10 +1445,11 @@ function normalizeExecUrl_(url){
 }
 
 /** ====== Email branding / layout helpers ====== **/
-function mailCfg_(){
+function mailCfg_(adminId){
+  const scope = normalizeAdminId_(adminId||'1');
   return {
-    brandName: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo:   cfg_('MAIL_REPLY_TO')    || Session.getActiveUser().getEmail(),
+    brandName: cfgForAdmin_(scope, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo:   cfgForAdmin_(scope, 'MAIL_REPLY_TO')    || Session.getActiveUser().getEmail(),
     color:     cfg_('MAIL_BRAND_COLOR') || '#1d4ed8',
     bg:        cfg_('MAIL_BG_COLOR')    || '#f6f7fb',
     text:      cfg_('MAIL_TEXT_COLOR')  || '#111827',
@@ -1260,7 +1461,8 @@ function mailCfg_(){
 }
 
 function emailLayout_(opts){
-  var m = mailCfg_();
+  const scope = normalizeAdminId_(opts && opts.adminId || '1');
+  var m = mailCfg_(scope);
   var title     = String(opts.title || m.brandName);
   var preheader = String(opts.preheader || 'Notificación del sistema de reservas');
   var inner     = String(opts.htmlInner || '');
@@ -1269,9 +1471,9 @@ function emailLayout_(opts){
   var footer    = String(opts.footer || 'Este es un mensaje automático. No respondas a este correo.');
 
   // Bloque de contacto de administración (línea adicional en letra pequeña)
-  var adminName  = cfg_('ADMIN_CONTACT_NAME') || '';
-  var adminEmail = cfg_('ADMIN_CONTACT_EMAIL') || '';
-  var adminExt   = cfg_('ADMIN_CONTACT_EXTENSION') || '';
+  var adminName  = cfgForAdmin_(scope, 'ADMIN_CONTACT_NAME') || '';
+  var adminEmail = cfgForAdmin_(scope, 'ADMIN_CONTACT_EMAIL') || '';
+  var adminExt   = cfgForAdmin_(scope, 'ADMIN_CONTACT_EXTENSION') || '';
   var contactLine = '';
   if (adminName || adminEmail || adminExt){
     var parts = [];
@@ -1358,7 +1560,7 @@ function recipientsJoin_(){
 function job_Diario_5AM_ActividadesDeHoy(){
   const today = ymd_(new Date());               // YYYY-MM-DD
   const lr = SH_RES.getLastRow(); if (lr<2) return;
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const cmap = conserjeMap_();
   const hoy = rows
     .filter(r => String(r[2]).toUpperCase()==='APROBADA' && ymdCell_(r[3])===today)
@@ -1444,8 +1646,8 @@ function job_Diario_5AM_ActividadesDeHoy(){
     subject: `Reserva de Salones | Agenda de hoy – ${fmtDMY_(today)}`,
     htmlBody: html,
     body,
-    name: cfg_('MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_('1', 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
+    replyTo: cfgForAdmin_('1', 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
@@ -1454,7 +1656,7 @@ function job_Diario_7AM_Recordatorios(){
   const d = new Date(); d.setDate(d.getDate()+1);
   const target = ymd_(d);
   const lr = SH_RES.getLastRow(); if (lr<2) return;
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const list = rows
     .filter(r => String(r[2]).toUpperCase()==='APROBADA' && ymdCell_(r[3])===target)
     .map(r => toReservaObj_(r));
@@ -1466,6 +1668,7 @@ function job_Diario_7AM_Recordatorios(){
   list.forEach(r => {
     const cancelUrl = appUrl + `?cancel=${encodeURIComponent(r.token)}`;
     const subj = `Recordatorio – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
+    const adminId = normalizeAdminId_(r.administracion_id||'1');
     const html = emailLayout_({
       title: 'Recordatorio de reserva',
       preheader: `Mañana tienes reservada ${r.salon_nombre}.`,
@@ -1482,20 +1685,21 @@ function job_Diario_7AM_Recordatorios(){
       ctaLabel: 'Abrir sistema',
       footer: (function(){
         const admin = {
-          name:  cfg_('ADMIN_CONTACT_NAME') || 'Administración',
-          email: cfg_('ADMIN_CONTACT_EMAIL') || '',
-          ext:   cfg_('ADMIN_CONTACT_EXTENSION') || ''
+          name:  cfgForAdmin_(adminId, 'ADMIN_CONTACT_NAME') || 'Administración',
+          email: cfgForAdmin_(adminId, 'ADMIN_CONTACT_EMAIL') || '',
+          ext:   cfgForAdmin_(adminId, 'ADMIN_CONTACT_EXTENSION') || ''
         };
         return `Este recordatorio se envía un día antes del evento.<br/>`;
-      })()
+      })(),
+      adminId
     });
 
     MailApp.sendEmail({
       to: r.solicitante_email,
       subject: subj,
       htmlBody: html,
-      name: cfg_('MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
-      replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+      name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
+      replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
     });
   });
 }
@@ -1507,7 +1711,7 @@ function job_Diario_7AM_Recordatorios(){
 function dbg_Send_5AM_Preview(fechaYMD, toOverride){
   const savedYmd = fechaYMD || ymd_(new Date());
   const lr = SH_RES.getLastRow(); if (lr<2){ Logger.log('No hay reservas'); return; }
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const cmap = conserjeMap_();
   const list = rows.filter(r => String(r[2]).toUpperCase()==='APROBADA' && ymdCell_(r[3])===savedYmd)
                    .map(r => toReservaObj_(r))
@@ -1529,7 +1733,7 @@ function dbg_Send_7AM_Preview(baseYMD, toOverride){
   d.setDate(d.getDate()+1);
   const target = ymd_(d);
   const lr = SH_RES.getLastRow(); if (lr<2){ Logger.log('No hay reservas'); return; }
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues();
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const list = rows.filter(r => String(r[2]).toUpperCase()==='APROBADA' && ymdCell_(r[3])===target).map(r => toReservaObj_(r));
   if (!list.length){ Logger.log('Sin reservas para %s', target); return; }
   // Ejecuta job real
@@ -1644,8 +1848,10 @@ function getLogoUrl(){
 
 // ========= Usuarios (Admin CRUD) =========
 function apiListUsuarios(){
+  const me = getUser_();
+  if (!isGeneralAdminUser_(me)) return { ok:false, msg:'No autorizado' };
   const lr = SH_USR.getLastRow(); if (lr<2) return { ok:true, data:[] };
-  const vals = SH_USR.getRange(2,1,lr-1,8).getValues(); // email,nombre,departamento,rol,prioridad,prioridad_salones,estado,extension
+  const vals = SH_USR.getRange(2,1,lr-1,9).getValues(); // email,nombre,departamento,rol,prioridad,prioridad_salones,estado,extension,admin
   const data = vals.map(r=>{
     const prioSalonesRaw = String(r[5]||'').trim();
     return {
@@ -1657,7 +1863,8 @@ function apiListUsuarios(){
       prioridad_salones: prioSalonesRaw,
       prioridad_salones_list: parsePrioridadSalones_(prioSalonesRaw),
       estado:String(r[6]||'').toUpperCase(),
-      extension:String(r[7]||'')
+      extension:String(r[7]||''),
+      administracion_id: normalizeAdminId_(r[8]||'1')
     };
   });
   return { ok:true, data };
@@ -1665,13 +1872,15 @@ function apiListUsuarios(){
 
 function apiUpsertUsuario(u){
   const me = (Session.getActiveUser().getEmail()||'');
-  if (!isAdminEmail_(me)) return { ok:false, msg:'No autorizado' };
+  const meUser = getUser_();
+  if (!isAdminEmail_(me) || !isGeneralAdminUser_(meUser)) return { ok:false, msg:'No autorizado' };
   if (!u || !u.email) return { ok:false, msg:'Email requerido' };
   const email = String(u.email).toLowerCase().trim();
   const nombre = String(u.nombre||'').trim();
   const dep = String(u.departamento||'').trim();
   const rol = String(u.rol||'').toUpperCase().trim();
   const prio = Number(u.prioridad||0);
+  const adminId = normalizeAdminId_(u.administracion_id || u.admin_id || '1');
   let prioSalonesInput = '';
   if (Array.isArray(u.prioridad_salones)){
     prioSalonesInput = u.prioridad_salones.join(';');
@@ -1688,21 +1897,23 @@ function apiUpsertUsuario(u){
   const ext = String(u.extension||'').trim();
   const lr = SH_USR.getLastRow();
   if (lr>=2){
-    const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
+    const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
     for (let i=0;i<vals.length;i++){
       if (String(vals[i][0]).toLowerCase().trim()===email){
-        SH_USR.getRange(i+2,2,1,7).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext]]);
+        SH_USR.getRange(i+2,2,1,8).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId]]);
         return { ok:true, updated:true };
       }
     }
   }
-  SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext]);
+  SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId]);
   return { ok:true, created:true };
 }
 
 // ========= API conserjes =========
 
 function apiListConserjes(){
+  const me = getUser_();
+  if (!isAdminEmail_((me && me.email)||'')) return { ok:false, msg:'No autorizado' };
   if (!SH_CON) return { ok:true, data:[] };
   const lr = SH_CON.getLastRow(); if (lr<2) return { ok:true, data:[] };
   const rows = SH_CON.getRange(2,1,lr-1,5).getValues(); // codigo,nombre,email,telefono,activo
@@ -1718,7 +1929,8 @@ function apiListConserjes(){
 
 function apiAddConserje(nombre, email, telefono){
   const me = (Session.getActiveUser().getEmail()||'');
-  if (!isAdminEmail_(me)) return { ok:false, msg:'No autorizado' };
+  const user = getUser_();
+  if (!isAdminEmail_(me) || !isGeneralAdminUser_(user)) return { ok:false, msg:'No autorizado' };
   if (!SH_CON) return { ok:false, msg:'Hoja Conserjes no existe' };
   const codigo = nextId_(SH_CON, 'C-');
   SH_CON.appendRow([codigo, nombre||'', (email||'').toLowerCase(), telefono||'', 'SI']);
@@ -1727,7 +1939,8 @@ function apiAddConserje(nombre, email, telefono){
 
 function apiDeleteConserje(codigo){
   const me = (Session.getActiveUser().getEmail()||'');
-  if (!isAdminEmail_(me)) return { ok:false, msg:'No autorizado' };
+  const user = getUser_();
+  if (!isAdminEmail_(me) || !isGeneralAdminUser_(user)) return { ok:false, msg:'No autorizado' };
   const lr = SH_CON.getLastRow(); if (lr<2) return { ok:false, msg:'No hay conserjes' };
   const vals = SH_CON.getRange(2,1,lr-1,5).getValues();
   for (let i=0;i<vals.length;i++){
@@ -1744,7 +1957,8 @@ function apiDeleteConserje(codigo){
 // fields = { nombre?, email?, telefono?, activo? }
 function apiUpdateConserje(codigo, fields){
   const me = (Session.getActiveUser().getEmail()||'');
-  if (!isAdminEmail_(me)) return { ok:false, msg:'No autorizado' };
+  const user = getUser_();
+  if (!isAdminEmail_(me) || !isGeneralAdminUser_(user)) return { ok:false, msg:'No autorizado' };
   if (!SH_CON) return { ok:false, msg:'Hoja Conserjes no existe' };
   codigo = String(codigo||'').trim();
   if (!codigo) return { ok:false, msg:'Código inválido' };
@@ -1789,7 +2003,7 @@ function apiUpdateConserje(codigo, fields){
 
 function getConserjeConflicts_(conserjeCodigo, fecha, ini, fin){
   const lr = SH_RES.getLastRow(); if (lr<2) return [];
-  const rows = SH_RES.getRange(2,1,lr-1,23).getValues(); // incluye nueva col 23: conserje_codigo_asignado
+  const rows = SH_RES.getRange(2,1,lr-1,24).getValues(); // incluye nueva col 24: conserje_codigo_asignado + admin
   const iniMin = toMin_(normHHMM_(ini));
   const finMin = toMin_(normHHMM_(fin));
   if (isNaN(iniMin) || isNaN(finMin)) return [];
@@ -1809,11 +2023,17 @@ function getConserjeConflicts_(conserjeCodigo, fecha, ini, fin){
 
 function apiAsignarConserje(reservaId, conserjeCodigo){
   const me = (Session.getActiveUser().getEmail()||'');
+  const user = getUser_();
   if (!isAdminEmail_(me)) return { ok:false, msg:'No autorizado' };
 
   // Lee reserva
   const r = getReservaById_(reservaId);
   if (!r) return { ok:false, msg:'Reserva no encontrada' };
+  const scope = adminScopeForUser_(user);
+  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+    return { ok:false, msg:'No autorizado para este salón' };
+  }
+  const adminId = normalizeAdminId_(r.administracion_id||'1');
   if (String(r.estado).toUpperCase()!=='APROBADA') return { ok:false, msg:'La reserva no está aprobada' };
   // No permitir asignar si ya pasó o faltan <30 min
   const start = toDate_(r.fecha);
@@ -1854,15 +2074,16 @@ function apiAsignarConserje(reservaId, conserjeCodigo){
           ['Hora', fmt12_(r.hora_inicio) + ' – ' + fmt12_(r.hora_fin)],
           ['Evento', r.evento_nombre||'']
         ]),
-      footer: 'Gracias por tu apoyo logístico.'
+      footer: 'Gracias por tu apoyo logístico.',
+      adminId
     });
 
     MailApp.sendEmail({
       to: c.email,
       subject: subj,
       htmlBody: html,
-      name: cfg_('MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
-      replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+      name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
+      replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
     });
   }catch(e){
     // si el email falla, no revertimos la asignación
@@ -1888,7 +2109,7 @@ function apiSolicitarAcceso(nombre, departamento, extension){
     const lr = SH_USR.getLastRow();
     // buscamos fila existente
     if (lr >= 2){
-      const vals = SH_USR.getRange(2,1,lr-1,8).getValues();
+      const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
       for (let i=0;i<vals.length;i++){
         if (String(vals[i][0]).trim().toLowerCase() === email){
           // Actualiza nombre, departamento, extension y estado -> PENDIENTE
@@ -1906,7 +2127,7 @@ function apiSolicitarAcceso(nombre, departamento, extension){
 
     // Si no existe, append con estado PENDIENTE
     // Si faltan columnas, Apps Script las crea al vuelo
-    SH_USR.appendRow([email, nombre, departamento, '', 0, '', 'PENDIENTE', extension]);
+    SH_USR.appendRow([email, nombre, departamento, '', 0, '', 'PENDIENTE', extension, '1']);
     SpreadsheetApp.flush();
     try{ notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension); }catch(e){}
     return { ok:true, created:true };
@@ -1916,7 +2137,8 @@ function apiSolicitarAcceso(nombre, departamento, extension){
 }
 
 function notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension){
-  const to = (cfg_('ADMIN_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean).join(',');
+  const adminId = '1';
+  const to = (cfgForAdmin_(adminId, 'ADMIN_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean).join(',');
   if (!to) return;
   const subj = 'Nueva solicitud de acceso – Reserva de Salones';
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
@@ -1934,12 +2156,13 @@ function notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension){
       emailParagraph_('Asigne <b>rol</b> y <b>prioridad</b> y cambie el <b>estado</b> a <b>ACTIVO</b> para habilitar al usuario.'),
     ctaUrl: appUrl,
     ctaLabel: 'Abrir sistema',
-    footer:'Este mensaje se envía automáticamente al registrar una solicitud de acceso.'
+    footer:'Este mensaje se envía automáticamente al registrar una solicitud de acceso.',
+    adminId
   });
   MailApp.sendEmail({
     to, subject:subj, htmlBody:html,
-    name: cfg_('MAIL_SENDER_NAME') || 'Reserva de Salones',
-    replyTo: cfg_('MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
 }
 
@@ -1964,7 +2187,7 @@ function apiListMisReservasByEmail(fechaDesde, fechaHasta, email){
   if (!who) return {ok:true, data:[]};
 
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:true, data:[]};
-  const lc = Math.max(23, SH_RES.getLastColumn());              // 👈 asegura leer col 23
+  const lc = Math.max(24, SH_RES.getLastColumn());              // 👈 asegura leer col 24
   const rows = SH_RES.getRange(2,1,lr-1,lc).getValues();
 
   // Parse local, sin desplazamiento UTC (evita off-by-one)
@@ -1997,7 +2220,7 @@ function apiListMisReservasByEmail(fechaDesde, fechaHasta, email){
 function maintenance_NormalizarHoras(){
   const sh = SH_RES; if (!sh) return 0;
   const lr = sh.getLastRow(); if (lr<2) return 0;
-  const vals = sh.getRange(2,1,lr-1,23).getValues();
+  const vals = sh.getRange(2,1,lr-1,24).getValues();
   let changes = 0;
   for (let i=0;i<vals.length;i++){
     const oldIni = vals[i][4], oldFin = vals[i][5];

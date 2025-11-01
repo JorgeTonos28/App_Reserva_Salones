@@ -1,6 +1,16 @@
 <script>
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
+const ADMIN_SCOPE = String((ME && (ME.administracion_id || ME.admin_id || ME.adminScope || '1')) || '1').trim() || '1';
+const IS_GENERAL_ADMIN = ADMIN_SCOPE === '1';
+let __SALONES_ALL__ = [];
+let __SALONES_MANAGE__ = [];
+let __SALON_CFG_MAP__ = {};
+const DEFAULT_DUR_CFG = {
+  min: Number(window.__DUR_MIN__ || 30),
+  max: Number(window.__DUR_MAX__ || 240),
+  step: Number(window.__DUR_STEP__ || 30)
+};
 function getPrioridadSalonesAdmin(){
   const seen = {};
   const out = [];
@@ -145,14 +155,18 @@ function drawSalones(arr){
     if (meta.intervals && meta.intervals.length){ parts.push(`Horarios: ${meta.intervals.join(', ')}`); }
     if (meta.requiresApproval){ parts.push('Requiere aprobación manual'); }
     const restr = parts.length ? parts.join('<br/>') : '—';
+    const conserjeTxt = String(s.requiere_conserje||'SI').toUpperCase()==='SI' ? 'Sí' : 'No';
+    const adminTxt = String(s.administracion_id||'1');
     return `<tr>
       <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
       <td>${restr}</td>
+      <td>${conserjeTxt}</td>
+      <td>${adminTxt}</td>
       <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
       <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
 }
 function toggleSalon(id, on){ Busy.show('Guardando…'); google.script.run
@@ -275,35 +289,55 @@ function aprobarAdmin(id){
     .apiAprobarReservaAdmin(id);
 }
 
-function loadSalones(){ google.script.run
-  .withSuccessHandler(r=>{
-    const data = ((r&&r.data)||[]);
-    drawSalones(data);
-    // === NUEVO: mapa de capacidades para validación local ===
-    window.__SALON_CAPS__ = {};
-    window.__SALON_META_ADMIN__ = {};
-    data.forEach(s => {
-      window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
-      window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
-    });
-    // === NUEVO: poblar select del formulario Admin si existe ===
-    const sel = document.getElementById('a-salon');
-    if (sel){
-      const opts = ['<option value="">[Seleccionar]</option>']
-        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
-      sel.innerHTML = opts.join('');
-      if (!sel.__metaListenerAttached){
-        sel.addEventListener('change', applyAdminSalonMetaHints);
-        sel.__metaListenerAttached = true;
-      }
-      applyAdminSalonMetaHints();
-    }
-    // limpia el tag de cap máx al cargar
-    const tag = document.getElementById('a-capMaxTag');
-    if (tag) tag.textContent = '';
-  })
-  .withFailureHandler(e=> modal('No se pudo cargar salones'))
-  .apiListSalones();
+function buildSalonCaches(all){
+  window.__SALON_CAPS__ = {};
+  window.__SALON_META_ADMIN__ = {};
+  __SALON_CFG_MAP__ = {};
+  (all||[]).forEach(s => {
+    window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
+    window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+    __SALON_CFG_MAP__[s.id] = {
+      duracion_min: Number(s.duracion_min||30),
+      duracion_max: Number(s.duracion_max||240),
+      duracion_step: Number(s.duracion_step||30),
+      horario_inicio: s.horario_inicio,
+      horario_fin: s.horario_fin
+    };
+  });
+}
+
+function populateSalonSelect(all){
+  const sel = document.getElementById('a-salon');
+  if (!sel) return;
+  const opts = ['<option value="">[Seleccionar]</option>']
+    .concat((all||[]).map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
+  sel.innerHTML = opts.join('');
+  if (!sel.__metaListenerAttached){
+    sel.addEventListener('change', applyAdminSalonMetaHints);
+    sel.__metaListenerAttached = true;
+  }
+  applyAdminSalonMetaHints();
+}
+
+function loadSalones(){
+  google.script.run
+    .withSuccessHandler(r=>{
+      const payload = (r&&r.data) || {};
+      const manage = Array.isArray(payload.manage) ? payload.manage : [];
+      const all    = Array.isArray(payload.all) ? payload.all : manage.slice();
+      __SALONES_MANAGE__ = manage;
+      __SALONES_ALL__ = all;
+      drawSalones(manage);
+      buildSalonCaches(all);
+      populateSalonSelect(all);
+      initSalonCapacityAdmin(all);
+      renderDurationsFromConfigAdmin();
+      // limpia el tag de cap máx al cargar
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag) tag.textContent = '';
+    })
+    .withFailureHandler(()=> modal('No se pudo cargar salones'))
+    .apiListSalonesAdmin();
 }
 
 function buscar(){
@@ -324,7 +358,17 @@ function init(){
   setDefaultAdminRange(30);
   loadConserjeMap(()=> buscar());
   $('#btnBuscar').onclick = buscar;
-  $('#btnConserjes').onclick = openConserjesModal;
+  if (IS_GENERAL_ADMIN){
+    const btnCon = document.getElementById('btnConserjes');
+    if (btnCon) btnCon.onclick = openConserjesModal;
+    const btnUsr = document.getElementById('btnUsuarios');
+    if (btnUsr) btnUsr.onclick = openUsuariosModal;
+  } else {
+    const btnCon = document.getElementById('btnConserjes');
+    if (btnCon) btnCon.style.display = 'none';
+    const btnUsr = document.getElementById('btnUsuarios');
+    if (btnUsr) btnUsr.style.display = 'none';
+  }
 
   // === Listeners de validación de capacidad en el formulario Admin ===
   const aSalon = document.getElementById('a-salon');
@@ -368,8 +412,6 @@ function init(){
       aCant.classList.toggle('input-error', bad);
     });
   }
-
-  $('#btnUsuarios').onclick  = openUsuariosModal;
 
   // ===== Crear reserva (Admin) =====
   bootCreateAdmin();
@@ -622,36 +664,51 @@ function crearReservaAdmin(){
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
     .apiCrearReserva(p);
 }
+function getDurationConfigForSalonAdmin(salonId){
+  const cfg = (__SALON_CFG_MAP__||{})[salonId];
+  if (!cfg) return { ...DEFAULT_DUR_CFG };
+  return {
+    min: Number(cfg.duracion_min || DEFAULT_DUR_CFG.min),
+    max: Number(cfg.duracion_max || DEFAULT_DUR_CFG.max),
+    step: Number(cfg.duracion_step || DEFAULT_DUR_CFG.step)
+  };
+}
+
 function renderDurationsFromConfigAdmin(){
   const sel = $('#a-dur');
-  const min  = Number(window.__DUR_MIN__ || 30);
-  const max  = Number(window.__DUR_MAX__ || 240);
-  const step = Number(window.__DUR_STEP__ || 30);
+  if (!sel) return;
+  const salonId = ($('#a-salon') && $('#a-salon').value) || '';
+  const cfg = getDurationConfigForSalonAdmin(salonId);
+  const min = Math.max(1, Number(cfg.min || DEFAULT_DUR_CFG.min));
+  const max = Math.max(min, Number(cfg.max || min));
+  const step = Math.max(1, Number(cfg.step || DEFAULT_DUR_CFG.step));
   const opts = ['<option value="">[Seleccionar]</option>'];
   for (let d=min; d<=max; d+=step){
     const label = (d<60)? `${d} minutos` : (d%60===0? `${d/60} ${d===60?'hora':'horas'}` : `${Math.floor(d/60)} horas ${d%60} min`);
     opts.push(`<option value="${d}">${label}</option>`);
   }
   sel.innerHTML = opts.join('');
+  sel.value = '';
 }
 
 // ===== Capacidad (Admin) =====
 let __SALON_MAP_ADMIN__ = {}; // { id: {capacidad, nombre} }
-function initSalonCapacityAdmin(){
-  // Construye mapa local de capacidades
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      __SALON_MAP_ADMIN__ = {};
-      data.forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
+let __CAP_LISTENER_BOUND__ = false;
+function initSalonCapacityAdmin(all){
+  const dataset = Array.isArray(all) ? all : (__SALONES_ALL__ || []);
+  __SALON_MAP_ADMIN__ = {};
+  (dataset||[]).forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
+  syncCapLabelAdmin();
+  hookCantValidationAdmin();
+  const salonSel = document.getElementById('a-salon');
+  if (salonSel && !__CAP_LISTENER_BOUND__){
+    salonSel.addEventListener('change', ()=>{
       syncCapLabelAdmin();
-      hookCantValidationAdmin();
-    })
-    .withFailureHandler(()=>{ __SALON_MAP_ADMIN__ = {}; syncCapLabelAdmin(); hookCantValidationAdmin(); })
-    .apiListSalones();
-  $('#a-salon').addEventListener('change', syncCapLabelAdmin);
+      renderDurationsFromConfigAdmin();
+    });
+    __CAP_LISTENER_BOUND__ = true;
+  }
 
-  // También esconder hint al cambiar de salón
   const err = document.getElementById('a-cantError');
   if (err) err.hidden = true;
 }
@@ -691,6 +748,7 @@ function hookCantValidationAdmin(){
 
 // ===== Usuarios (modal) =====
 function openUsuariosModal(){
+  if (!IS_GENERAL_ADMIN) return;
   const modal = document.getElementById('modalUsers');
   const listEl = document.getElementById('users-list');
   let selected = null; // objeto usuario seleccionado
@@ -705,9 +763,10 @@ function openUsuariosModal(){
         <td>${u.prioridad_salones||''}</td>
         <td>${u.estado||''}</td>
         <td>${u.extension||''}</td>
+        <td>${u.administracion_id||'1'}</td>
       </tr>
     `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -727,7 +786,7 @@ function openUsuariosModal(){
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-admin'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
   };
@@ -740,6 +799,7 @@ function openUsuariosModal(){
     document.getElementById('u-prio-salones').value = u?.prioridad_salones||'';
     document.getElementById('u-estado').value = u?.estado||'';
     document.getElementById('u-ext').value = u?.extension||'';
+    document.getElementById('u-admin').value = u?.administracion_id || '';
   };
   const load = ()=>{
     Busy.show('Cargando usuarios…');
@@ -757,7 +817,8 @@ function openUsuariosModal(){
       prioridad:Number(document.getElementById('u-prio').value||0),
       prioridad_salones: document.getElementById('u-prio-salones').value.trim(),
       estado:   document.getElementById('u-estado').value.trim(),
-      extension:document.getElementById('u-ext').value.trim()
+      extension:document.getElementById('u-ext').value.trim(),
+      administracion_id: (document.getElementById('u-admin').value || '1').trim()
     };
     if (!payload.email) return modalMsg('Correo es obligatorio.');
     // Si hay selección y no hay cambios → no-op
@@ -769,7 +830,8 @@ function openUsuariosModal(){
         Number(selected.prioridad||0)===payload.prioridad &&
         (String(selected.prioridad_salones||'').trim()===payload.prioridad_salones) &&
         (selected.estado||'')===payload.estado &&
-        (selected.extension||'')===payload.extension){
+        (selected.extension||'')===payload.extension &&
+        (String(selected.administracion_id||'1')===String(payload.administracion_id||'1'))){
       clearUserForm();
       const rows = listEl.querySelectorAll('.u-row'); rows.forEach(x=>x.classList.remove('selected')); selected=null;
       return modalMsg('No hay cambios que guardar.');
@@ -792,6 +854,7 @@ function openUsuariosModal(){
 // Lógica modal conserjes y asignar conserjes
 
 function openConserjesModal(){
+  if (!IS_GENERAL_ADMIN) return;
   const modalEl = document.getElementById('modalCon');
   const listEl  = document.getElementById('con-list');
 

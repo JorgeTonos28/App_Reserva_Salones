@@ -34,6 +34,12 @@ function getEffectivePriorityForSalon(salonId){
 let __SALONES__ = [];      // cache local de salones (id, nombre, capacidad, habilitado)
 let __extHintTimer__ = 0;  // timer para ocultar hint de extensión tras un intento inválido
 let __SLOT_INFO__ = {};    // cache local de slots con metadata de disponibilidad
+let __SALON_CFG__ = {};    // { id: {duracion_min, duracion_max, duracion_step, horario_inicio, horario_fin} }
+const DEFAULT_DUR_CFG_PUBLIC = {
+  min: Number(window.__DUR_MIN__ || 30),
+  max: Number(window.__DUR_MAX__ || 240),
+  step: Number(window.__DUR_STEP__ || 30)
+};
 
 function escHtml(str){
   return String(str || '').replace(/[&<>"']/g, ch => ({
@@ -265,9 +271,17 @@ function loadSalones(){
       // Mapa local de capacidades para usar en validaciones/hints sin consultar al servidor
       window.__SALON_CAPS__ = {};
       window.__SALON_META__ = {};
+      __SALON_CFG__ = {};
       data.forEach(s => {
         window.__SALON_CAPS__[s.id] = Number(s.capacidad) || 0;
         window.__SALON_META__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+        __SALON_CFG__[s.id] = {
+          duracion_min: Number(s.duracion_min||30),
+          duracion_max: Number(s.duracion_max||240),
+          duracion_step: Number(s.duracion_step||30),
+          horario_inicio: s.horario_inicio,
+          horario_fin: s.horario_fin
+        };
       });
 
       // Al cargar, limpia el tag de capacidad
@@ -279,6 +293,7 @@ function loadSalones(){
       $('#selSalon').addEventListener('change', ()=>{
         updateSalonHint();
         applySalonMetaHints();
+        renderDurationsFromConfig();
       }, { once:false });
       updateSalonHint();
       applySalonMetaHints();
@@ -953,17 +968,31 @@ function init(){
 document.addEventListener('DOMContentLoaded', init);
 
 /* ===== Duración desde Config ===== */
+function getDurationConfigForSalon(salonId){
+  const cfg = (__SALON_CFG__||{})[salonId];
+  if (!cfg) return { ...DEFAULT_DUR_CFG_PUBLIC };
+  return {
+    min: Number(cfg.duracion_min || DEFAULT_DUR_CFG_PUBLIC.min),
+    max: Number(cfg.duracion_max || DEFAULT_DUR_CFG_PUBLIC.max),
+    step: Number(cfg.duracion_step || DEFAULT_DUR_CFG_PUBLIC.step)
+  };
+}
+
 function renderDurationsFromConfig(){
   const sel = $('#dur');
-  const min  = Number(window.__DUR_MIN__ || 30);
-  const max  = Number(window.__DUR_MAX__ || 240);
-  const step = Number(window.__DUR_STEP__ || 30);
+  if (!sel) return;
+  const salonId = ($('#selSalon') && $('#selSalon').value) || '';
+  const cfg = getDurationConfigForSalon(salonId);
+  const min = Math.max(1, Number(cfg.min || DEFAULT_DUR_CFG_PUBLIC.min));
+  const max = Math.max(min, Number(cfg.max || min));
+  const step = Math.max(1, Number(cfg.step || DEFAULT_DUR_CFG_PUBLIC.step));
   const opts = ['<option value="">[Seleccionar]</option>'];
   for (let d=min; d<=max; d+=step){
     const label = humanizeMinutes(d);
     opts.push(`<option value="${d}">${label}</option>`);
   }
   sel.innerHTML = opts.join('');
+  sel.value = '';
 }
 function humanizeMinutes(mins){
   if (mins < 60) return `${mins} minutos`;
