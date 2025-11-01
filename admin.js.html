@@ -54,7 +54,7 @@ const ADMIN_SCOPE_IDS = (() => {
 })();
 
 function adminCanManageSalonFront(salonId){
-  if (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL) return true;
+  if (ADMIN_ALL_ACCESS) return true;
   const map = window.__SALON_ADMIN_IDS__ || {};
   const adminId = Number(map[String(salonId||'')] || 0);
   if (!adminId) return false;
@@ -204,7 +204,7 @@ function setDefaultAdminRange(days=30){
 
 function drawSalones(arr){
   const el = $('#salones');
-  const list = (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL)
+  const list = ADMIN_ALL_ACCESS
     ? arr
     : arr.filter(s => s.admin_can_manage || adminCanManageSalonFront(s.id));
   if (!list.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }

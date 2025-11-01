@@ -66,7 +66,12 @@ distribuir la experiencia a diferentes perfiles.
    campos opcionales como `extension`. El número que acompaña al rol `ADMIN`
    determina la administración a la que pertenece el usuario: `ADMIN1` accede a
    la administración general (Config), `ADMIN2` a la hoja `Config2`, y así
-   sucesivamente.
+   sucesivamente. Cada administrador `ADMIN#` únicamente verá y gestionará los
+   salones y reservas asociados a su propia administración en el panel
+   administrativo. Si necesitas un perfil con acceso total a todas las
+   administraciones, asigna el rol `ADMIN` (sin sufijo) o `SUPERADMIN`, o bien
+   incluye su correo en la clave opcional `ADMIN_ALL_ACCESS_EMAILS` de la hoja
+   `Config` (separando múltiples direcciones con `;`).
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
    capacidad, sede y las columnas `restriccion`, `conserje` y `administracion`.
    La columna `restriccion` acepta:

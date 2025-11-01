@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.9-2025-11-05';
+const APP_VERSION = 'salones-v9.10-2025-11-05';
 
 const ADMIN_CFG_OVERRIDABLE_KEYS = {
   ADMIN_EMAILS: true,
@@ -294,7 +294,25 @@ function adminRoleIdForUser_(user){
 }
 
 function adminHasFullAccess_(user){
-  return isGeneralAdminUser_(user);
+  if (!user) return false;
+  const role = String(user.rol || '').trim().toUpperCase();
+  if (role === 'ADMIN' || role === 'ADMIN0' || role === 'ADMIN_ALL' || role === 'SUPERADMIN'){
+    return true;
+  }
+  const email = String(user.email || '').trim().toLowerCase();
+  if (!email) return false;
+  const allowTokens = [];
+  const pushTokens = (raw) => {
+    if (!raw) return;
+    String(raw)
+      .split(/[;,]/)
+      .map((t) => String(t || '').trim().toLowerCase())
+      .filter(Boolean)
+      .forEach((token) => allowTokens.push(token));
+  };
+  pushTokens(cfg_('ADMIN_ALL_ACCESS_EMAILS'));
+  if (!allowTokens.length) return false;
+  return allowTokens.includes(email);
 }
 
 function adminSalonCodesForUser_(user){
@@ -553,7 +571,10 @@ function resetSalonesCache_(){ __SALON_CACHE__ = null; }
 
 function apiListSalones(){
   const me = getUser_();
-  const data = getSalonesData_().map(s => ({
+  const salones = getSalonesData_();
+  const canSeeAll = adminHasFullAccess_(me);
+  const visibleSalones = canSeeAll ? salones : salones.filter(s => adminCanManageSalon_(me, s.id));
+  const data = visibleSalones.map(s => ({
     id: s.id,
     nombre: s.nombre,
     capacidad: s.capacidad,
@@ -573,7 +594,7 @@ function apiListSalones(){
 }
 function apiToggleSalon(salonId, habilitar){
   const me = getUser_();
-  if (!isGeneralAdminUser_(me) && !adminCanManageSalon_(me, salonId)){
+  if (!adminHasFullAccess_(me) && !adminCanManageSalon_(me, salonId)){
     return {ok:false,msg:'No autorizado'};
   }
   const lr = SH_SAL.getLastRow(); if (lr<2) return {ok:false,msg:'No hay salones'};
@@ -1057,8 +1078,8 @@ function apiListReservasAdmin(fechaDesde, fechaHasta){
     .map(r => toReservaObj_(r));
   const cmap = conserjeMap_();
   data = data.map(x => ({ ...x, conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || '' }));
-  const isGeneral = isGeneralAdminUser_(me) || adminHasFullAccess_(me);
-  if (!isGeneral){
+  const canSeeAll = adminHasFullAccess_(me);
+  if (!canSeeAll){
     const allowed = new Set(adminSalonCodesForUser_(me).map(code => String(code||'').toUpperCase()));
     data = data.filter(r => allowed.has(String(r.salon_id||'').trim().toUpperCase()));
   }
@@ -1120,7 +1141,7 @@ function apiCancelarReservaAdmin(id, motivo){
   // Guardarrail: hasta 30 min antes del inicio
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
-  if (!isGeneralAdminUser_(user) && !adminCanManageReservation_(user, r)){
+  if (!adminHasFullAccess_(user) && !adminCanManageReservation_(user, r)){
     return {ok:false,msg:'No autorizado'};
   }
   const estado = String(r.estado).toUpperCase();
@@ -1143,7 +1164,7 @@ function apiAprobarReservaAdmin(id){
   const user = getUser_();
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
-  if (!isGeneralAdminUser_(user) && !adminCanManageReservation_(user, r)){
+  if (!adminHasFullAccess_(user) && !adminCanManageReservation_(user, r)){
     return {ok:false,msg:'No autorizado'};
   }
   const estado = String(r.estado||'').toUpperCase();
