@@ -181,6 +181,46 @@
 
   <script>
     window.__LOGO_URL__ = "<?= logoUrl ?>";
+    const RAW_ADMIN_SCOPE_IDS = <?= JSON.stringify(me && me.admin_scope_ids || []) ?>;
+    const normalizeAdminScopeIds = (raw => {
+      const tokens = [];
+      const seen = new Set();
+      const visit = (value) => {
+        if (value == null) return;
+        if (Array.isArray(value)){
+          value.forEach(visit);
+          return;
+        }
+        if (value instanceof Set){
+          value.forEach(visit);
+          return;
+        }
+        if (typeof value === 'object'){
+          if (seen.has(value)) return;
+          seen.add(value);
+          Object.keys(value).forEach(k => visit(value[k]));
+          return;
+        }
+        if (typeof value === 'string'){
+          value.split(/[;,]/).forEach(part => {
+            const token = part.trim();
+            if (token) tokens.push(token);
+          });
+          return;
+        }
+        tokens.push(value);
+      };
+      visit(raw);
+      const out = [];
+      tokens.forEach(token => {
+        const normalized = String(token || '').trim();
+        if (!normalized) return;
+        const num = Number(normalized.replace(/^[^0-9]+/, '')) || Number(normalized) || 0;
+        if (!num || !Number.isFinite(num)) return;
+        if (!out.includes(num)) out.push(num);
+      });
+      return out;
+    });
     window.__ME__ = {
       email: "<?= me && me.email ?>",
       nombre: "<?= me && me.nombre ?>",
@@ -193,9 +233,9 @@
       admin_role_id: <?= Number(me && me.admin_role_id || 0) ?>,
       admin_all_access: <?= (me && me.admin_all_access) ? 'true' : 'false' ?>,
       is_general_admin: <?= (me && me.is_general_admin) ? 'true' : 'false' ?>,
-      admin_scope_ids: <?= JSON.stringify(me && me.admin_scope_ids || []) ?>
+      admin_scope_ids: normalizeAdminScopeIds(RAW_ADMIN_SCOPE_IDS)
     };
-    window.__ADMIN_SCOPE_IDS__ = <?= JSON.stringify(me && me.admin_scope_ids || []) ?>;
+    window.__ADMIN_SCOPE_IDS__ = window.__ME__.admin_scope_ids.slice();
     window.__ADMIN_ALL_ACCESS__ = <?= (me && me.admin_all_access) ? 'true' : 'false' ?>;
     window.__ADMIN_IS_GENERAL__ = <?= (me && me.is_general_admin) ? 'true' : 'false' ?>;
     window.__GLOBAL_CFG__ = <?= JSON.stringify(globalCfg || {}) ?>;
