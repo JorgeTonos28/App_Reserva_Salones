@@ -16,6 +16,9 @@ distribuir la experiencia a diferentes perfiles.
   denegar o cancelar reservas existentes.
 - **Gestión de catálogos** de salones, con capacidad, sede, banderas de
   habilitación y reglas de restricción horaria.
+- **Multiadministración por salón**, permitiendo delegar la operación a
+  distintos equipos con configuraciones (horarios, duración, contactos y
+  branding de correo) independientes por administración.
 - **Notificaciones por correo** en cada transición relevante de la reserva.
 - **Integración con Google Drive** para incrustar el logotipo institucional en
   correos e interfaces.
@@ -55,18 +58,42 @@ distribuir la experiencia a diferentes perfiles.
    `HORARIO_INICIO`, `HORARIO_FIN`, `DURATION_MIN`, `DURATION_MAX`,
    `DURATION_STEP`, etc.).
 3. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
-   definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
-   `INACTIVO`), `prioridad` y el nuevo campo `prioridad_salones`. Este último
-   permite restringir la prioridad a ciertos salones escribiendo sus códigos
-   separados por `;` (ej. `S00004;S00005`). Para los demás espacios la
-   prioridad se tratará como 0. Completa también los campos opcionales como
-   `extension` cuando apliquen.
+   definiendo `rol` (`ADMIN1`, `ADMIN2`, `ADMIN3`, …, `SOLICITANTE`), `estado`
+   (`ACTIVO`, `PENDIENTE`, `INACTIVO`), `prioridad` y el campo
+   `prioridad_salones`. Este último permite restringir la prioridad a ciertos
+   salones escribiendo sus códigos separados por `;` (ej. `S00004;S00005`).
+   Para los demás espacios la prioridad se tratará como 0. Completa también los
+   campos opcionales como `extension`. El número que acompaña al rol `ADMIN`
+   determina la administración a la que pertenece el usuario: `ADMIN1` accede a
+   la administración general (Config), `ADMIN2` a la hoja `Config2`, y así
+   sucesivamente. Cada administrador `ADMIN#` únicamente verá y gestionará los
+   salones y reservas asociados a su propia administración en el panel
+   administrativo. El formulario “Crear reserva (Admin)” permite seleccionar
+   cualquier salón del catálogo y aplicará automáticamente la configuración y
+   las notificaciones de la administración propietaria del salón elegido.
+   Si necesitas un perfil con acceso total a todas las
+   administraciones, asigna el rol `ADMIN` (sin sufijo) o `SUPERADMIN`, o bien
+   incluye su correo en la clave opcional `ADMIN_ALL_ACCESS_EMAILS` de la hoja
+   `Config` (separando múltiples direcciones con `;`).
 4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
-   capacidad, sede y la columna `restriccion`. Este último campo acepta:
+   capacidad, sede y las columnas `restriccion`, `conserje` y `administracion`.
+   La columna `restriccion` acepta:
    - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
      horarios específicos (por ejemplo `11:00-14:00;08:00-09:00`).
    - El valor `CONFIRM` (o `COFNIRM`) para forzar que las solicitudes entren en
      estado `PENDIENTE` y requieran aprobación manual.
+   La columna `conserje` controla si, además de que el evento se extienda más
+   allá de las 16:00, el sistema debe solicitar asignación de conserje (`SI`)
+   o si puede omitir ese flujo (`NO`). La columna `administracion` determina
+   qué configuración aplicará a ese salón: `1` utiliza la hoja `Config`
+   tradicional, mientras que `2`, `3`, etc. consultan hojas adicionales como
+   `Config2`, `Config3` para obtener parámetros específicos (horarios,
+   duraciones, contactos, remitentes) de cada administración.
+   Cada hoja adicional debe incluir al menos las claves `ADMIN_EMAILS`,
+   `HORARIO_INICIO`, `HORARIO_FIN`, `DURATION_MIN`, `DURATION_STEP`,
+   `DURATION_MAX`, `MAIL_SENDER_NAME`, `MAIL_REPLY_TO`, `ADMIN_CONTACT_NAME`,
+   `ADMIN_CONTACT_EMAIL` y `ADMIN_CONTACT_EXTENSION`; cualquier clave faltante
+   heredará automáticamente el valor definido en la hoja `Config` principal.
 5. Verificar la pestaña `Reservas` para asegurar que las columnas coinciden con
    la estructura consumida por el backend (ID, solicitante, fechas, horarios,
    estado, etc.).

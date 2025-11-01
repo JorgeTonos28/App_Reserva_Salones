@@ -1,6 +1,65 @@
 <script>
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
+const GLOBAL_CFG = window.__GLOBAL_CFG__ || {};
+const ADMIN_ALL_ACCESS = !!window.__ADMIN_ALL_ACCESS__;
+const ADMIN_IS_GENERAL = !!window.__ADMIN_IS_GENERAL__;
+function collectAdminScopeRawIds(raw){
+  const out = [];
+  const seenObjects = new Set();
+  const visit = (value) => {
+    if (value == null) return;
+    if (Array.isArray(value)){
+      value.forEach(visit);
+      return;
+    }
+    if (value instanceof Set){
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === 'object'){
+      if (seenObjects.has(value)) return;
+      seenObjects.add(value);
+      if (Object.prototype.hasOwnProperty.call(value, 'value')) visit(value.value);
+      if (Object.prototype.hasOwnProperty.call(value, 'id')) visit(value.id);
+      Object.keys(value).forEach(key => {
+        if (key === 'value' || key === 'id') return;
+        try { visit(value[key]); } catch(e){}
+      });
+      return;
+    }
+    if (typeof value === 'string'){
+      value.split(/[;,]/).forEach(part => {
+        const token = part.trim();
+        if (token) out.push(token);
+      });
+      return;
+    }
+    out.push(value);
+  };
+  visit(raw);
+  return out;
+}
+
+const ADMIN_SCOPE_IDS = (() => {
+  const ids = new Set();
+  collectAdminScopeRawIds(window.__ADMIN_SCOPE_IDS__).forEach(token => {
+    const normalized = String(token || '').trim();
+    if (!normalized) return;
+    const num = Number(normalized.replace(/^[^0-9]+/, '')) || Number(normalized) || 0;
+    if (!num || !Number.isFinite(num)) return;
+    ids.add(num);
+  });
+  return ids;
+})();
+
+function adminCanManageSalonFront(salonId){
+  if (ADMIN_ALL_ACCESS) return true;
+  const map = window.__SALON_ADMIN_IDS__ || {};
+  const adminId = Number(map[String(salonId||'')] || 0);
+  if (!adminId) return false;
+  return ADMIN_SCOPE_IDS.has(adminId);
+}
 function getPrioridadSalonesAdmin(){
   const seen = {};
   const out = [];
@@ -30,10 +89,35 @@ function getEffectivePriorityForSalonAdmin(salonId){
   if (!target) return base;
   return list.includes(target) ? base : 0;
 }
+
+function getSalonConfigAdmin(salonId){
+  const cfgMap = window.__SALON_CFG_ADMIN__ || {};
+  const key = String(salonId||'');
+  if (key && cfgMap[key]) return cfgMap[key];
+  return GLOBAL_CFG;
+}
 const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
 function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
 
 let __CON_MAP__ = null; // { codigo: {nombre, email, ...} }
+let __SALON_SCHED_ADMIN__ = [];
+let __ADMIN_CANT_VALIDATION_BOUND__ = false;
+
+function rebuildSalonCapacityAdmin(){
+  __SALON_MAP_ADMIN__ = {};
+  (__SALON_SCHED_ADMIN__ || []).forEach(s => {
+    const cap = Number(s.capacidad || 0) || 0;
+    __SALON_MAP_ADMIN__[s.id] = { cap, nombre: s.nombre };
+  });
+  syncCapLabelAdmin();
+  if (__ADMIN_CANT_VALIDATION_BOUND__){
+    const cant = document.getElementById('a-cant');
+    if (cant){
+      const evt = new Event('input', { bubbles: true });
+      cant.dispatchEvent(evt);
+    }
+  }
+}
 function loadConserjeMap(cb){
   if (__CON_MAP__) return cb && cb(__CON_MAP__);
   google.script.run
@@ -138,8 +222,11 @@ function setDefaultAdminRange(days=30){
 
 function drawSalones(arr){
   const el = $('#salones');
-  if (!arr.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
-  const rows = arr.map(s=>{
+  const list = ADMIN_ALL_ACCESS
+    ? arr
+    : arr.filter(s => s.admin_can_manage || adminCanManageSalonFront(s.id));
+  if (!list.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
+  const rows = list.map(s=>{
     const meta = parseSalonRestrictionMeta(s.restriccion);
     const parts = [];
     if (meta.intervals && meta.intervals.length){ parts.push(`Horarios: ${meta.intervals.join(', ')}`); }
@@ -275,35 +362,72 @@ function aprobarAdmin(id){
     .apiAprobarReservaAdmin(id);
 }
 
-function loadSalones(){ google.script.run
-  .withSuccessHandler(r=>{
-    const data = ((r&&r.data)||[]);
-    drawSalones(data);
-    // === NUEVO: mapa de capacidades para validación local ===
-    window.__SALON_CAPS__ = {};
-    window.__SALON_META_ADMIN__ = {};
-    data.forEach(s => {
-      window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
-      window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
-    });
-    // === NUEVO: poblar select del formulario Admin si existe ===
-    const sel = document.getElementById('a-salon');
-    if (sel){
-      const opts = ['<option value="">[Seleccionar]</option>']
-        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
-      sel.innerHTML = opts.join('');
-      if (!sel.__metaListenerAttached){
-        sel.addEventListener('change', applyAdminSalonMetaHints);
-        sel.__metaListenerAttached = true;
+function loadSalones(){
+  Busy.show('Cargando salones…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      const payload = r || {};
+      const manageable = Array.isArray(payload.data) ? payload.data : [];
+      const scheduling = Array.isArray(payload.scheduling) ? payload.scheduling : manageable;
+      __SALON_SCHED_ADMIN__ = scheduling.slice();
+      window.__SALON_CAPS__ = {};
+      window.__SALON_META_ADMIN__ = {};
+      window.__SALON_CFG_ADMIN__ = {};
+      window.__SALON_ADMIN_IDS__ = {};
+      scheduling.forEach(s => {
+        window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
+        window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+        window.__SALON_CFG_ADMIN__[s.id] = {
+          HORARIO_INICIO: s.horario_inicio || GLOBAL_CFG.HORARIO_INICIO || '07:00',
+          HORARIO_FIN:    s.horario_fin    || GLOBAL_CFG.HORARIO_FIN    || '20:00',
+          DUR_MIN:  Number(s.duration_min  || GLOBAL_CFG.DUR_MIN  || 30),
+          DUR_MAX:  Number(s.duration_max  || GLOBAL_CFG.DUR_MAX  || 240),
+          DUR_STEP: Number(s.duration_step || GLOBAL_CFG.DUR_STEP || 30)
+        };
+        window.__SALON_ADMIN_IDS__[s.id] = Number(s.administracion || 0) || 0;
+      });
+      rebuildSalonCapacityAdmin();
+      drawSalones(manageable);
+      const sel = document.getElementById('a-salon');
+      if (sel){
+        const prev = sel.value;
+        const opts = ['<option value="">[Seleccionar]</option>']
+          .concat(scheduling.map(s => {
+            const flags = [];
+            if (!s.habilitado) flags.push('Deshabilitado');
+            if (!s.admin_can_manage && !ADMIN_ALL_ACCESS) flags.push(`Adm. ${s.administracion}`);
+            const suffix = flags.length ? ` (${flags.join(' · ')})` : '';
+            const disabledAttr = s.habilitado ? '' : 'disabled';
+            return `<option value="${s.id}" ${disabledAttr}>${s.nombre}${suffix}</option>`;
+          }));
+        sel.innerHTML = opts.join('');
+        if (prev && scheduling.some(s => String(s.id) === String(prev))){
+          sel.value = prev;
+        } else {
+          sel.value = '';
+        }
+        const currentSalon = sel.value||'';
+        renderDurationsFromConfigAdmin(currentSalon);
+        applyAdminSalonMetaHints();
+        if (currentSalon){
+          scheduleRefreshSlotsAdmin();
+        }
       }
-      applyAdminSalonMetaHints();
-    }
-    // limpia el tag de cap máx al cargar
-    const tag = document.getElementById('a-capMaxTag');
-    if (tag) tag.textContent = '';
-  })
-  .withFailureHandler(e=> modal('No se pudo cargar salones'))
-  .apiListSalones();
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag) tag.textContent = '';
+    })
+    .withFailureHandler(()=>{
+      Busy.hide();
+      __SALON_SCHED_ADMIN__ = [];
+      window.__SALON_CAPS__ = {};
+      window.__SALON_META_ADMIN__ = {};
+      window.__SALON_CFG_ADMIN__ = {};
+      window.__SALON_ADMIN_IDS__ = {};
+      rebuildSalonCapacityAdmin();
+      modal('No se pudo cargar salones');
+    })
+    .apiListSalones();
 }
 
 function buscar(){
@@ -324,13 +448,31 @@ function init(){
   setDefaultAdminRange(30);
   loadConserjeMap(()=> buscar());
   $('#btnBuscar').onclick = buscar;
-  $('#btnConserjes').onclick = openConserjesModal;
+  const btnCon = document.getElementById('btnConserjes');
+  if (btnCon){
+    if (ADMIN_IS_GENERAL){
+      btnCon.onclick = openConserjesModal;
+    } else {
+      btnCon.hidden = true;
+    }
+  }
+  const btnUsers = document.getElementById('btnUsuarios');
+  if (btnUsers){
+    if (ADMIN_IS_GENERAL){
+      btnUsers.onclick = openUsuariosModal;
+    } else {
+      btnUsers.hidden = true;
+    }
+  }
 
   // === Listeners de validación de capacidad en el formulario Admin ===
   const aSalon = document.getElementById('a-salon');
   const aCant  = document.getElementById('a-cant');
   if (aSalon){
     aSalon.addEventListener('change', ()=>{
+      renderDurationsFromConfigAdmin(aSalon.value||'');
+      applyAdminSalonMetaHints();
+      scheduleRefreshSlotsAdmin();
       // actualiza tag y revalida
       const cap = (window.__SALON_CAPS__||{})[aSalon.value||''] || 0;
       const tag = document.getElementById('a-capMaxTag');
@@ -368,8 +510,6 @@ function init(){
       aCant.classList.toggle('input-error', bad);
     });
   }
-
-  $('#btnUsuarios').onclick  = openUsuariosModal;
 
   // ===== Crear reserva (Admin) =====
   bootCreateAdmin();
@@ -430,22 +570,15 @@ function bootCreateAdmin(){
   const today = new Date(); const y=today.getFullYear(), m=String(today.getMonth()+1).padStart(2,'0'), d=String(today.getDate()).padStart(2,'0');
   const ymd = `${y}-${m}-${d}`;
   const $f = $('#a-fecha'); if ($f){ $f.min = ymd; $f.value = ymd; }
-  // Cargar salones
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      const sel = $('#a-salon');
-      sel.innerHTML = ['<option value="">[Seleccionar]</option>'].concat(data.map(s=>`<option value="${s.id}" ${s.habilitado?'':'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`)).join('');
-    })
-    .withFailureHandler(()=>{ /* noop */ })
-    .apiListSalones();
-  // Duraciones desde config (serán inyectadas por servidor en Public; aquí replicamos)
-  renderDurationsFromConfigAdmin();
+  // Duraciones iniciales desde config global
+  renderDurationsFromConfigAdmin('');
   // Eventos
-  $('#a-salon').onchange = scheduleRefreshSlotsAdmin;
-  $('#a-fecha').onchange = scheduleRefreshSlotsAdmin;
-  $('#a-dur').onchange   = scheduleRefreshSlotsAdmin;
-  $('#a-hora').onchange  = verifySelectedSlotAdmin;
+  const fechaSel = $('#a-fecha');
+  if (fechaSel) fechaSel.onchange = scheduleRefreshSlotsAdmin;
+  const durSel = $('#a-dur');
+  if (durSel) durSel.onchange = scheduleRefreshSlotsAdmin;
+  const horaSel = $('#a-hora');
+  if (horaSel) horaSel.onchange = verifySelectedSlotAdmin;
   $('#a-crear').onclick  = crearReservaAdmin;
 
   // Filtro de extensión (solo números) con hint
@@ -622,38 +755,41 @@ function crearReservaAdmin(){
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
     .apiCrearReserva(p);
 }
-function renderDurationsFromConfigAdmin(){
+function renderDurationsFromConfigAdmin(salonId){
   const sel = $('#a-dur');
-  const min  = Number(window.__DUR_MIN__ || 30);
-  const max  = Number(window.__DUR_MAX__ || 240);
-  const step = Number(window.__DUR_STEP__ || 30);
+  if (!sel) return;
+  const cfg = getSalonConfigAdmin(salonId);
+  const min  = Number(cfg.DUR_MIN || GLOBAL_CFG.DUR_MIN || 30);
+  const max  = Number(cfg.DUR_MAX || GLOBAL_CFG.DUR_MAX || 240);
+  const step = Number(cfg.DUR_STEP || GLOBAL_CFG.DUR_STEP || 30) || 30;
+  const prev = sel.value;
   const opts = ['<option value="">[Seleccionar]</option>'];
+  const validValues = new Set();
   for (let d=min; d<=max; d+=step){
     const label = (d<60)? `${d} minutos` : (d%60===0? `${d/60} ${d===60?'hora':'horas'}` : `${Math.floor(d/60)} horas ${d%60} min`);
     opts.push(`<option value="${d}">${label}</option>`);
+    validValues.add(String(d));
   }
   sel.innerHTML = opts.join('');
+  if (prev && validValues.has(String(prev))){
+    sel.value = prev;
+  } else {
+    sel.value = '';
+  }
 }
 
 // ===== Capacidad (Admin) =====
 let __SALON_MAP_ADMIN__ = {}; // { id: {capacidad, nombre} }
 function initSalonCapacityAdmin(){
-  // Construye mapa local de capacidades
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      __SALON_MAP_ADMIN__ = {};
-      data.forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
-      syncCapLabelAdmin();
-      hookCantValidationAdmin();
-    })
-    .withFailureHandler(()=>{ __SALON_MAP_ADMIN__ = {}; syncCapLabelAdmin(); hookCantValidationAdmin(); })
-    .apiListSalones();
-  $('#a-salon').addEventListener('change', syncCapLabelAdmin);
-
-  // También esconder hint al cambiar de salón
+  const select = $('#a-salon');
+  if (select && !select.__capListenerBound){
+    select.addEventListener('change', syncCapLabelAdmin);
+    select.__capListenerBound = true;
+  }
   const err = document.getElementById('a-cantError');
   if (err) err.hidden = true;
+  hookCantValidationAdmin();
+  rebuildSalonCapacityAdmin();
 }
 function maxCapForSalonAdmin(){
   const id = $('#a-salon').value||'';
@@ -668,14 +804,15 @@ function syncCapLabelAdmin(){
   else lab.textContent = 'Cant. de personas';
 }
 function hookCantValidationAdmin(){
+  if (__ADMIN_CANT_VALIDATION_BOUND__) return;
   const cant = $('#a-cant'), err = $('#a-cantError');
   if (!cant || !err) return;
-  // Al cargar, asegúrate de ocultar el hint
+  __ADMIN_CANT_VALIDATION_BOUND__ = true;
   err.hidden = true;
   const check = ()=>{
     const cap = maxCapForSalonAdmin();
     const val = Number(cant.value||0);
-    if (!cant.value){ err.hidden = true; return; } // vacío → sin hint
+    if (!cant.value){ err.hidden = true; return; }
     if (cap>0 && val>cap){
       err.textContent = `Excede la capacidad del salón (máx ${cap}).`;
       err.hidden = false;
@@ -684,19 +821,23 @@ function hookCantValidationAdmin(){
     }
   };
   cant.addEventListener('input', check);
-  $('#a-salon').addEventListener('change', check);
-  // También: si cambias de salón, resetea valor y label si quieres (opcional)
-  // $('#a-cant').value = '';
+  const sel = $('#a-salon');
+  if (sel) sel.addEventListener('change', check);
+  check();
 }
 
 // ===== Usuarios (modal) =====
 function openUsuariosModal(){
+  if (!ADMIN_IS_GENERAL){ window.modal('No autorizado'); return; }
   const modal = document.getElementById('modalUsers');
   const listEl = document.getElementById('users-list');
   let selected = null; // objeto usuario seleccionado
   const draw = (items=[])=>{
     if (!items.length){ listEl.innerHTML = '<p style="padding:10px">No hay usuarios.</p>'; return; }
-    const rows = items.map(u=>`
+    const rows = items.map(u=>{
+      const adminId = Number(u.administracion||0) || 0;
+      const adminLabel = adminId ? `ADMIN${adminId}` : '—';
+      return `
       <tr class="u-row" data-email="${u.email}">
         <td>${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
         <td>${u.departamento||''}</td>
@@ -705,9 +846,10 @@ function openUsuariosModal(){
         <td>${u.prioridad_salones||''}</td>
         <td>${u.estado||''}</td>
         <td>${u.extension||''}</td>
-      </tr>
-    `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
+        <td>${adminLabel}</td>
+      </tr>`;
+    }).join('');
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Administración</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -727,7 +869,7 @@ function openUsuariosModal(){
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-rol'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
   };
@@ -744,7 +886,7 @@ function openUsuariosModal(){
   const load = ()=>{
     Busy.show('Cargando usuarios…');
     google.script.run
-      .withSuccessHandler(r=>{ Busy.hide(); draw((r&&r.data)||[]); })
+      .withSuccessHandler(r=>{ Busy.hide(); if(!r || !r.ok){ modalMsg((r&&r.msg)||'No se pudieron cargar usuarios'); return; } draw(r.data||[]); })
       .withFailureHandler(()=>{ Busy.hide(); modalMsg('No se pudieron cargar usuarios'); })
       .apiListUsuarios();
   };
@@ -792,6 +934,7 @@ function openUsuariosModal(){
 // Lógica modal conserjes y asignar conserjes
 
 function openConserjesModal(){
+  if (!ADMIN_IS_GENERAL){ window.modal('No autorizado'); return; }
   const modalEl = document.getElementById('modalCon');
   const listEl  = document.getElementById('con-list');
 
