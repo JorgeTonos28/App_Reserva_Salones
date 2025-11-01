@@ -51,11 +51,16 @@ distribuir la experiencia a diferentes perfiles.
 ## Configuración inicial
 
 1. Duplicar la hoja de cálculo original y ajustar los datos base en cada pestaña.
-2. En `Config`, completar las claves utilizadas por el script (`ADMIN_EMAILS`,
+2. Ejecutar la función `setupSheetsAndConfig()` desde el editor de Apps Script
+   (Run ▶︎ setupSheetsAndConfig). Esto crea las pestañas faltantes y asegura que
+   los encabezados incluyan las nuevas columnas `administracion_id` y
+   `requiere_conserje` donde corresponda. Si ya existe información, solo se
+   actualiza la fila de encabezados.
+3. En `Config`, completar las claves utilizadas por el script (`ADMIN_EMAILS`,
    `HORARIO_INICIO`, `HORARIO_FIN`, `DURATION_MIN`, `DURATION_MAX`,
    `DURATION_STEP`, etc.). Esta hoja representa la **administración general**
    (ID `1`).
-3. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
+4. En `Usuarios`, registrar a todas las personas que usarán la herramienta,
    definiendo `rol` (`ADMIN`, `SOLICITANTE`), `estado` (`ACTIVO`, `PENDIENTE`,
    `INACTIVO`), `prioridad`, el campo `prioridad_salones` y el nuevo
    `administracion_id` (columna `I`). El `administracion_id` determina a qué
@@ -64,21 +69,23 @@ distribuir la experiencia a diferentes perfiles.
    original. `prioridad_salones` permite restringir la prioridad a ciertos
    salones escribiendo sus códigos separados por `;` (ej. `S00004;S00005`).
    Completa también los campos opcionales como `extension` cuando apliquen.
-4. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
+5. En `Salones`, mantener el catálogo de espacios disponibles, con campos de
    capacidad, sede y la columna `restriccion`. Añade también `administracion_id`
    (columna `G`) para indicar qué administración gobierna el salón (por defecto
    `1`) y `requiere_conserje` (columna `H`) para definir si debe solicitar
-   conserje después de las 4:00 p. m. El campo `restriccion` acepta:
+   conserje después de las 4:00 p. m. El script detecta ambas columnas por
+   nombre, de modo que funcionará incluso si aparecen al final mientras se
+   respeten los encabezados exactos. El campo `restriccion` acepta:
  - Intervalos separados por `;` con formato `HH:MM-HH:MM` para bloquear
     horarios específicos (por ejemplo `11:00-14:00;08:00-09:00`).
   - El valor `CONFIRM` (o `COFNIRM`) para forzar que las solicitudes entren en
     estado `PENDIENTE` y requieran aprobación manual.
-5. Verificar la pestaña `Reservas` para asegurar que las columnas coinciden con
+6. Verificar la pestaña `Reservas` para asegurar que las columnas coinciden con
    la estructura consumida por el backend (ID, solicitante, fechas, horarios,
    estado, etc.). El script espera una columna adicional `administracion_id`
    (posición 24) que se completa automáticamente con la administración del
    salón seleccionado al crear la reserva.
-6. Personalizar los archivos HTML y CSS si se requiere adaptar la identidad
+7. Personalizar los archivos HTML y CSS si se requiere adaptar la identidad
    gráfica corporativa.
 
 ### Administraciones paralelas por salón

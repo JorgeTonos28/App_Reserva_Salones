@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.1-2025-11-06';
+const APP_VERSION = 'salones-v10.2-2025-11-07';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -157,6 +157,26 @@ const ADMIN_ALT_CFG_KEYS = Object.freeze({
 
 const __ADMIN_CFG_CACHE__ = {};
 const __ADMIN_RUNTIME_CACHE__ = {};
+
+function sheetHeaders_(sh){
+  if (!sh) return [];
+  const lastCol = sh.getLastColumn();
+  if (lastCol < 1) return [];
+  const values = sh.getRange(1, 1, 1, lastCol).getValues();
+  return (values && values[0]) ? values[0].map(h => String(h || '').trim()) : [];
+}
+
+function headerIndex_(headers, name, fallback){
+  const target = String(name || '').trim().toLowerCase();
+  if (!target) return Math.max(0, Number(fallback) || 0);
+  if (!Array.isArray(headers) || !headers.length){
+    return Math.max(0, Number(fallback) || 0);
+  }
+  const idx = headers.findIndex(h => String(h || '').trim().toLowerCase() === target);
+  if (idx >= 0) return idx;
+  const fb = Math.max(0, Number(fallback) || 0);
+  return fb;
+}
 
 function normalizeAdminId_(id){
   const raw = String(id || '').trim();
@@ -492,22 +512,58 @@ function include_(fn){ return HtmlService.createHtmlOutputFromFile(fn).getConten
 // ========= Salones =========
 let __SALONES_CACHE__ = null;
 let __SALONES_MAP__ = null;
+let __SALON_LAYOUT__ = null;
+
+function salonSheetLayout_(){
+  if (!SH_SAL){
+    __SALON_LAYOUT__ = {
+      headers: [],
+      headerKey: '',
+      totalCols: 0,
+      idx: { id:0, nombre:1, capacidad:2, habilitado:3, sede:4, restriccion:5, administracion_id:6, requiere_conserje:7 }
+    };
+    return __SALON_LAYOUT__;
+  }
+  const totalCols = Math.max(1, SH_SAL.getLastColumn());
+  const headers = sheetHeaders_(SH_SAL);
+  const headerKey = headers.map(h => String(h||'').trim().toLowerCase()).join('|');
+  if (__SALON_LAYOUT__ && __SALON_LAYOUT__.headerKey === headerKey && __SALON_LAYOUT__.totalCols === totalCols){
+    return __SALON_LAYOUT__;
+  }
+  const idx = {
+    id: headerIndex_(headers, 'id', 0),
+    nombre: headerIndex_(headers, 'salon_nombre', 1),
+    capacidad: headerIndex_(headers, 'capacidad_max', 2),
+    habilitado: headerIndex_(headers, 'habilitado', 3),
+    sede: headerIndex_(headers, 'sede', 4),
+    restriccion: headerIndex_(headers, 'restriccion', 5),
+    administracion_id: headerIndex_(headers, 'administracion_id', 6),
+    requiere_conserje: headerIndex_(headers, 'requiere_conserje', 7)
+  };
+  __SALON_LAYOUT__ = { headers, headerKey, totalCols, idx };
+  return __SALON_LAYOUT__;
+}
 
 function salonesCache_(){
   if (__SALONES_CACHE__) return __SALONES_CACHE__;
   const lr = SH_SAL.getLastRow();
-  const rows = lr<2? [] : SH_SAL.getRange(2,1,lr-1,8).getValues();
+  const layout = salonSheetLayout_();
+  const totalCols = layout.totalCols || Math.max(1, SH_SAL.getLastColumn());
+  const rows = lr<2 ? [] : SH_SAL.getRange(2,1,lr-1,totalCols).getValues();
+  const idx = layout.idx;
   const data = rows.map(r=>{
-    const adminId = normalizeAdminId_(r[6]||'1');
+    const adminRaw = (idx.administracion_id >=0 && idx.administracion_id < r.length) ? r[idx.administracion_id] : '';
+    const adminId = normalizeAdminId_(adminRaw || '1');
     const adminCfg = getAdminRuntimeCfg_(adminId);
-    const requiereConserje = String(r[7]||'').toUpperCase()==='NO' ? 'NO' : 'SI';
+    const requiereRaw = (idx.requiere_conserje >=0 && idx.requiere_conserje < r.length) ? r[idx.requiere_conserje] : '';
+    const requiereConserje = String(requiereRaw||'').toUpperCase()==='NO' ? 'NO' : 'SI';
     return {
-      id: r[0],
-      nombre: r[1],
-      capacidad: Number(r[2]||0),
-      habilitado: String(r[3]||'').toUpperCase()==='SI',
-      sede: r[4]||'',
-      restriccion: String(r[5]||'').trim(),
+      id: (idx.id >=0 && idx.id < r.length) ? r[idx.id] : '',
+      nombre: (idx.nombre >=0 && idx.nombre < r.length) ? r[idx.nombre] : '',
+      capacidad: Number((idx.capacidad >=0 && idx.capacidad < r.length) ? r[idx.capacidad] : 0),
+      habilitado: String((idx.habilitado >=0 && idx.habilitado < r.length) ? r[idx.habilitado] : '').toUpperCase()==='SI',
+      sede: (idx.sede >=0 && idx.sede < r.length) ? r[idx.sede] : '',
+      restriccion: String((idx.restriccion >=0 && idx.restriccion < r.length) ? r[idx.restriccion] : '').trim(),
       administracion_id: adminId,
       requiere_conserje: requiereConserje,
       horario_inicio: adminCfg.horarioInicio,
@@ -531,6 +587,7 @@ function salonesMap_(){
 function invalidateSalonesCache_(){
   __SALONES_CACHE__ = null;
   __SALONES_MAP__ = null;
+  __SALON_LAYOUT__ = null;
 }
 
 function apiListSalones(){
@@ -556,14 +613,20 @@ function apiToggleSalon(salonId, habilitar){
   }
   const scope = adminScopeForUser_(me);
   const lr = SH_SAL.getLastRow(); if (lr<2) return {ok:false,msg:'No hay salones'};
-  const rows = SH_SAL.getRange(2,1,lr-1,8).getValues();
+  const layout = salonSheetLayout_();
+  const totalCols = layout.totalCols || Math.max(1, SH_SAL.getLastColumn());
+  const rows = SH_SAL.getRange(2,1,lr-1,totalCols).getValues();
+  const idx = layout.idx;
   for (let i=0;i<rows.length;i++){
-    if (rows[i][0]===salonId){
-      const adminId = normalizeAdminId_(rows[i][6]||'1');
+    const rowId = (idx.id >=0 && idx.id < rows[i].length) ? String(rows[i][idx.id]) : '';
+    if (rowId === salonId){
+      const adminRaw = (idx.administracion_id >=0 && idx.administracion_id < rows[i].length) ? rows[i][idx.administracion_id] : '';
+      const adminId = normalizeAdminId_(adminRaw || '1');
       if (scope !== '1' && scope !== adminId){
         return {ok:false, msg:'No autorizado para este salón'};
       }
-      SH_SAL.getRange(i+2,4).setValue(habilitar?'SI':'NO');
+      const habilitadoIdx = (idx.habilitado >=0 && idx.habilitado < totalCols) ? idx.habilitado : 3;
+      SH_SAL.getRange(i+2, habilitadoIdx+1).setValue(habilitar?'SI':'NO');
       invalidateSalonesCache_();
       return {ok:true};
     }
@@ -804,7 +867,7 @@ function apiCrearReserva(payload){
     if (!sal) return {ok:false, msg:'Salón inválido.'};
     if (!sal.habilitado) return {ok:false, msg:'Este salón está deshabilitado temporalmente.'};
     const restrSalon = parseSalonRestriction_(sal.restriccion);
-    const adminId = sal.administracion_id || '1';
+    const adminId = normalizeAdminId_(sal.administracion_id || '1');
     const runtimeCfg = getAdminRuntimeCfg_(adminId);
 
     const cant = Number(payload.cant_personas || 0);
@@ -1751,11 +1814,11 @@ function dbg_Send_7AM_Preview(baseYMD, toOverride){
 function setupSheetsAndConfig(){
   const must = [
     {name:'Config', headers:['key','value']},
-    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','prioridad_salones','estado','extension']},
+    {name:'Usuarios', headers:['email','nombre','departamento','rol','prioridad','prioridad_salones','estado','extension','administracion_id']},
     {name:'Conserjes', headers:['codigo','nombre','email','telefono','activo'] },
-    {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede','restriccion']},
+    {name:'Salones', headers:['id','salon_nombre','capacidad_max','habilitado','sede','restriccion','administracion_id','requiere_conserje']},
     {name:'Reservas', headers:[
-      'id','token','estado','fecha','hora_inicio','hora_fin','salon_id','salon_nombre','cant_personas','solicitante_email','solicitante_nombre','departamento','extension','evento_nombre','publico_tipo','prioridad','conserje_requerido','conserje_notificado','creado_en','actualizado_en','cancelado_por','cancelado_motivo','conserje_codigo_asignado'
+      'id','token','estado','fecha','hora_inicio','hora_fin','salon_id','salon_nombre','cant_personas','solicitante_email','solicitante_nombre','departamento','extension','evento_nombre','publico_tipo','prioridad','conserje_requerido','conserje_notificado','creado_en','actualizado_en','cancelado_por','cancelado_motivo','conserje_codigo_asignado','administracion_id'
     ]},
   ];
   const ss = SpreadsheetApp.getActive();
