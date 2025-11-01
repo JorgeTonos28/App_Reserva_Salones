@@ -100,6 +100,24 @@ const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const
 function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
 
 let __CON_MAP__ = null; // { codigo: {nombre, email, ...} }
+let __SALON_SCHED_ADMIN__ = [];
+let __ADMIN_CANT_VALIDATION_BOUND__ = false;
+
+function rebuildSalonCapacityAdmin(){
+  __SALON_MAP_ADMIN__ = {};
+  (__SALON_SCHED_ADMIN__ || []).forEach(s => {
+    const cap = Number(s.capacidad || 0) || 0;
+    __SALON_MAP_ADMIN__[s.id] = { cap, nombre: s.nombre };
+  });
+  syncCapLabelAdmin();
+  if (__ADMIN_CANT_VALIDATION_BOUND__){
+    const cant = document.getElementById('a-cant');
+    if (cant){
+      const evt = new Event('input', { bubbles: true });
+      cant.dispatchEvent(evt);
+    }
+  }
+}
 function loadConserjeMap(cb){
   if (__CON_MAP__) return cb && cb(__CON_MAP__);
   google.script.run
@@ -344,41 +362,72 @@ function aprobarAdmin(id){
     .apiAprobarReservaAdmin(id);
 }
 
-function loadSalones(){ google.script.run
-  .withSuccessHandler(r=>{
-    const data = ((r&&r.data)||[]);
-    window.__SALON_CAPS__ = {};
-    window.__SALON_META_ADMIN__ = {};
-    window.__SALON_CFG_ADMIN__ = {};
-    window.__SALON_ADMIN_IDS__ = {};
-    data.forEach(s => {
-      window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
-      window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
-      window.__SALON_CFG_ADMIN__[s.id] = {
-        HORARIO_INICIO: s.horario_inicio || GLOBAL_CFG.HORARIO_INICIO || '07:00',
-        HORARIO_FIN: s.horario_fin || GLOBAL_CFG.HORARIO_FIN || '20:00',
-        DUR_MIN: Number(s.duration_min || GLOBAL_CFG.DUR_MIN || 30),
-        DUR_MAX: Number(s.duration_max || GLOBAL_CFG.DUR_MAX || 240),
-        DUR_STEP: Number(s.duration_step || GLOBAL_CFG.DUR_STEP || 30)
-      };
-      window.__SALON_ADMIN_IDS__[s.id] = Number(s.administracion || 0) || 0;
-    });
-    drawSalones(data);
-    // === NUEVO: poblar select del formulario Admin si existe ===
-    const sel = document.getElementById('a-salon');
+function loadSalones(){
+  Busy.show('Cargando salones…');
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      const payload = r || {};
+      const manageable = Array.isArray(payload.data) ? payload.data : [];
+      const scheduling = Array.isArray(payload.scheduling) ? payload.scheduling : manageable;
+      __SALON_SCHED_ADMIN__ = scheduling.slice();
+      window.__SALON_CAPS__ = {};
+      window.__SALON_META_ADMIN__ = {};
+      window.__SALON_CFG_ADMIN__ = {};
+      window.__SALON_ADMIN_IDS__ = {};
+      scheduling.forEach(s => {
+        window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
+        window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+        window.__SALON_CFG_ADMIN__[s.id] = {
+          HORARIO_INICIO: s.horario_inicio || GLOBAL_CFG.HORARIO_INICIO || '07:00',
+          HORARIO_FIN:    s.horario_fin    || GLOBAL_CFG.HORARIO_FIN    || '20:00',
+          DUR_MIN:  Number(s.duration_min  || GLOBAL_CFG.DUR_MIN  || 30),
+          DUR_MAX:  Number(s.duration_max  || GLOBAL_CFG.DUR_MAX  || 240),
+          DUR_STEP: Number(s.duration_step || GLOBAL_CFG.DUR_STEP || 30)
+        };
+        window.__SALON_ADMIN_IDS__[s.id] = Number(s.administracion || 0) || 0;
+      });
+      rebuildSalonCapacityAdmin();
+      drawSalones(manageable);
+      const sel = document.getElementById('a-salon');
       if (sel){
+        const prev = sel.value;
         const opts = ['<option value="">[Seleccionar]</option>']
-          .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
+          .concat(scheduling.map(s => {
+            const flags = [];
+            if (!s.habilitado) flags.push('Deshabilitado');
+            if (!s.admin_can_manage && !ADMIN_ALL_ACCESS) flags.push(`Adm. ${s.administracion}`);
+            const suffix = flags.length ? ` (${flags.join(' · ')})` : '';
+            const disabledAttr = s.habilitado ? '' : 'disabled';
+            return `<option value="${s.id}" ${disabledAttr}>${s.nombre}${suffix}</option>`;
+          }));
         sel.innerHTML = opts.join('');
+        if (prev && scheduling.some(s => String(s.id) === String(prev))){
+          sel.value = prev;
+        } else {
+          sel.value = '';
+        }
+        const currentSalon = sel.value||'';
+        renderDurationsFromConfigAdmin(currentSalon);
         applyAdminSalonMetaHints();
-        renderDurationsFromConfigAdmin(sel.value||'');
+        if (currentSalon){
+          scheduleRefreshSlotsAdmin();
+        }
       }
-    // limpia el tag de cap máx al cargar
-    const tag = document.getElementById('a-capMaxTag');
-    if (tag) tag.textContent = '';
-  })
-  .withFailureHandler(e=> modal('No se pudo cargar salones'))
-  .apiListSalones();
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag) tag.textContent = '';
+    })
+    .withFailureHandler(()=>{
+      Busy.hide();
+      __SALON_SCHED_ADMIN__ = [];
+      window.__SALON_CAPS__ = {};
+      window.__SALON_META_ADMIN__ = {};
+      window.__SALON_CFG_ADMIN__ = {};
+      window.__SALON_ADMIN_IDS__ = {};
+      rebuildSalonCapacityAdmin();
+      modal('No se pudo cargar salones');
+    })
+    .apiListSalones();
 }
 
 function buscar(){
@@ -732,22 +781,15 @@ function renderDurationsFromConfigAdmin(salonId){
 // ===== Capacidad (Admin) =====
 let __SALON_MAP_ADMIN__ = {}; // { id: {capacidad, nombre} }
 function initSalonCapacityAdmin(){
-  // Construye mapa local de capacidades
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      __SALON_MAP_ADMIN__ = {};
-      data.forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
-      syncCapLabelAdmin();
-      hookCantValidationAdmin();
-    })
-    .withFailureHandler(()=>{ __SALON_MAP_ADMIN__ = {}; syncCapLabelAdmin(); hookCantValidationAdmin(); })
-    .apiListSalones();
-  $('#a-salon').addEventListener('change', syncCapLabelAdmin);
-
-  // También esconder hint al cambiar de salón
+  const select = $('#a-salon');
+  if (select && !select.__capListenerBound){
+    select.addEventListener('change', syncCapLabelAdmin);
+    select.__capListenerBound = true;
+  }
   const err = document.getElementById('a-cantError');
   if (err) err.hidden = true;
+  hookCantValidationAdmin();
+  rebuildSalonCapacityAdmin();
 }
 function maxCapForSalonAdmin(){
   const id = $('#a-salon').value||'';
@@ -762,14 +804,15 @@ function syncCapLabelAdmin(){
   else lab.textContent = 'Cant. de personas';
 }
 function hookCantValidationAdmin(){
+  if (__ADMIN_CANT_VALIDATION_BOUND__) return;
   const cant = $('#a-cant'), err = $('#a-cantError');
   if (!cant || !err) return;
-  // Al cargar, asegúrate de ocultar el hint
+  __ADMIN_CANT_VALIDATION_BOUND__ = true;
   err.hidden = true;
   const check = ()=>{
     const cap = maxCapForSalonAdmin();
     const val = Number(cant.value||0);
-    if (!cant.value){ err.hidden = true; return; } // vacío → sin hint
+    if (!cant.value){ err.hidden = true; return; }
     if (cap>0 && val>cap){
       err.textContent = `Excede la capacidad del salón (máx ${cap}).`;
       err.hidden = false;
@@ -778,9 +821,9 @@ function hookCantValidationAdmin(){
     }
   };
   cant.addEventListener('input', check);
-  $('#a-salon').addEventListener('change', check);
-  // También: si cambias de salón, resetea valor y label si quieres (opcional)
-  // $('#a-cant').value = '';
+  const sel = $('#a-salon');
+  if (sel) sel.addEventListener('change', check);
+  check();
 }
 
 // ===== Usuarios (modal) =====

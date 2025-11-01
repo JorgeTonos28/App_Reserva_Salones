@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.10-2025-11-05';
+const APP_VERSION = 'salones-v9.11-2025-11-05';
 
 const ADMIN_CFG_OVERRIDABLE_KEYS = {
   ADMIN_EMAILS: true,
@@ -572,25 +572,34 @@ function resetSalonesCache_(){ __SALON_CACHE__ = null; }
 function apiListSalones(){
   const me = getUser_();
   const salones = getSalonesData_();
+  const isAdmin = !!(me && isAdminRole_(me.rol));
   const canSeeAll = adminHasFullAccess_(me);
-  const visibleSalones = canSeeAll ? salones : salones.filter(s => adminCanManageSalon_(me, s.id));
-  const data = visibleSalones.map(s => ({
-    id: s.id,
-    nombre: s.nombre,
-    capacidad: s.capacidad,
-    habilitado: s.habilitado,
-    sede: s.sede,
-    restriccion: s.restriccion,
-    conserje: s.conserje ? 'SI' : 'NO',
-    administracion: s.administracion,
-    horario_inicio: cfgForAdmin_('HORARIO_INICIO', s.administracion) || (cfg_('HORARIO_INICIO') || '07:00'),
-    horario_fin: cfgForAdmin_('HORARIO_FIN', s.administracion) || (cfg_('HORARIO_FIN') || '20:00'),
-    duration_min: Number(cfgForAdmin_('DURATION_MIN', s.administracion) || (cfg_('DURATION_MIN') || 30)),
-    duration_max: Number(cfgForAdmin_('DURATION_MAX', s.administracion) || (cfg_('DURATION_MAX') || 240)),
-    duration_step: Number(cfgForAdmin_('DURATION_STEP', s.administracion) || (cfg_('DURATION_STEP') || 30)),
-    admin_can_manage: adminCanManageSalon_(me, s.id)
-  }));
-  return { ok:true, data };
+  const allRecords = salones.map(s => {
+    const adminId = Number(s.administracion || 1) || 1;
+    const canManage = canSeeAll ? true : adminCanManageSalon_(me, s.id);
+    return {
+      id: s.id,
+      nombre: s.nombre,
+      capacidad: s.capacidad,
+      habilitado: s.habilitado,
+      sede: s.sede,
+      restriccion: s.restriccion,
+      conserje: s.conserje ? 'SI' : 'NO',
+      administracion: adminId,
+      horario_inicio: cfgForAdmin_('HORARIO_INICIO', adminId) || (cfg_('HORARIO_INICIO') || '07:00'),
+      horario_fin: cfgForAdmin_('HORARIO_FIN', adminId) || (cfg_('HORARIO_FIN') || '20:00'),
+      duration_min: Number(cfgForAdmin_('DURATION_MIN', adminId) || (cfg_('DURATION_MIN') || 30)),
+      duration_max: Number(cfgForAdmin_('DURATION_MAX', adminId) || (cfg_('DURATION_MAX') || 240)),
+      duration_step: Number(cfgForAdmin_('DURATION_STEP', adminId) || (cfg_('DURATION_STEP') || 30)),
+      admin_can_manage: !!canManage
+    };
+  });
+  let visible = allRecords;
+  if (isAdmin && !canSeeAll){
+    visible = allRecords.filter(rec => rec.admin_can_manage);
+  }
+  const scheduling = isAdmin ? allRecords : visible;
+  return { ok:true, data: visible, scheduling };
 }
 function apiToggleSalon(salonId, habilitar){
   const me = getUser_();
