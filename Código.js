@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.2-2025-11-07';
+const APP_VERSION = 'salones-v10.3-2025-11-07';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -202,7 +202,8 @@ function cfgSheetLookup_(sheetName, key){
     return '';
   }
   const vals = sh.getRange(2,1,lr-1,2).getValues();
-  const row = vals.find(v => String(v[0]).trim() === key);
+  const lookup = String(key || '').trim().toLowerCase();
+  const row = vals.find(v => String(v[0]).trim().toLowerCase() === lookup);
   const val = row ? String(row[1]).trim() : '';
   __ADMIN_CFG_CACHE__[cacheKey] = val;
   return val;
@@ -600,9 +601,7 @@ function apiListSalonesAdmin(){
   if (!isAdminEmail_((me && me.email) || '')) return { ok:false, msg:'No autorizado' };
   const all = salonesCache_();
   const scope = adminScopeForUser_(me);
-  const manage = scope === '1'
-    ? all.slice()
-    : all.filter(s => String(s.administracion_id||'1') === scope);
+  const manage = all.filter(s => String(s.administracion_id||'1') === scope);
   return { ok:true, data:{ manage: manage.map(s => ({...s})), all: all.map(s => ({...s})) } };
 }
 
@@ -622,7 +621,7 @@ function apiToggleSalon(salonId, habilitar){
     if (rowId === salonId){
       const adminRaw = (idx.administracion_id >=0 && idx.administracion_id < rows[i].length) ? rows[i][idx.administracion_id] : '';
       const adminId = normalizeAdminId_(adminRaw || '1');
-      if (scope !== '1' && scope !== adminId){
+      if (scope !== adminId){
         return {ok:false, msg:'No autorizado para este salón'};
       }
       const habilitadoIdx = (idx.habilitado >=0 && idx.habilitado < totalCols) ? idx.habilitado : 3;
@@ -1099,7 +1098,7 @@ function apiListReservasAdmin(fechaDesde, fechaHasta){
   const d2 = fechaHasta ? toDate_(fechaHasta) : new Date(2100,0,1);
   let data = rows
     .filter(r => { const d=toDate_(r[3]); return d>=d1 && d<=d2; })
-    .filter(r => scope==='1' || normalizeAdminId_(r[23]||'1') === scope)
+    .filter(r => normalizeAdminId_(r[23]||'1') === scope)
     .map(r => toReservaObj_(r));
   const cmap = conserjeMap_();
   data = data.map(x => ({ ...x, conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || '' }));
@@ -1160,7 +1159,7 @@ function apiCancelarReservaAdmin(id, motivo){
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
   const scope = adminScopeForUser_(user);
-  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+  if (normalizeAdminId_(r.administracion_id||'1') !== scope){
     return {ok:false, msg:'No autorizado para este salón'};
   }
   const estado = String(r.estado).toUpperCase();
@@ -1184,7 +1183,7 @@ function apiAprobarReservaAdmin(id){
   const r = getReservaById_(id);
   if (!r) return {ok:false,msg:'Reserva no encontrada'};
   const scope = adminScopeForUser_(user);
-  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+  if (normalizeAdminId_(r.administracion_id||'1') !== scope){
     return {ok:false, msg:'No autorizado para este salón'};
   }
   const estado = String(r.estado||'').toUpperCase();
@@ -2093,7 +2092,7 @@ function apiAsignarConserje(reservaId, conserjeCodigo){
   const r = getReservaById_(reservaId);
   if (!r) return { ok:false, msg:'Reserva no encontrada' };
   const scope = adminScopeForUser_(user);
-  if (scope !== '1' && normalizeAdminId_(r.administracion_id||'1') !== scope){
+  if (normalizeAdminId_(r.administracion_id||'1') !== scope){
     return { ok:false, msg:'No autorizado para este salón' };
   }
   const adminId = normalizeAdminId_(r.administracion_id||'1');
