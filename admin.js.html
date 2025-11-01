@@ -4,7 +4,54 @@ const ME = (window.__ME__ || { prioridad: 0 });
 const GLOBAL_CFG = window.__GLOBAL_CFG__ || {};
 const ADMIN_ALL_ACCESS = !!window.__ADMIN_ALL_ACCESS__;
 const ADMIN_IS_GENERAL = !!window.__ADMIN_IS_GENERAL__;
-const ADMIN_SCOPE_IDS = new Set((window.__ADMIN_SCOPE_IDS__ || []).map(id => Number(id||0) || 0).filter(Boolean));
+function collectAdminScopeRawIds(raw){
+  const out = [];
+  const seenObjects = new Set();
+  const visit = (value) => {
+    if (value == null) return;
+    if (Array.isArray(value)){
+      value.forEach(visit);
+      return;
+    }
+    if (value instanceof Set){
+      value.forEach(visit);
+      return;
+    }
+    if (typeof value === 'object'){
+      if (seenObjects.has(value)) return;
+      seenObjects.add(value);
+      if (Object.prototype.hasOwnProperty.call(value, 'value')) visit(value.value);
+      if (Object.prototype.hasOwnProperty.call(value, 'id')) visit(value.id);
+      Object.keys(value).forEach(key => {
+        if (key === 'value' || key === 'id') return;
+        try { visit(value[key]); } catch(e){}
+      });
+      return;
+    }
+    if (typeof value === 'string'){
+      value.split(/[;,]/).forEach(part => {
+        const token = part.trim();
+        if (token) out.push(token);
+      });
+      return;
+    }
+    out.push(value);
+  };
+  visit(raw);
+  return out;
+}
+
+const ADMIN_SCOPE_IDS = (() => {
+  const ids = new Set();
+  collectAdminScopeRawIds(window.__ADMIN_SCOPE_IDS__).forEach(token => {
+    const normalized = String(token || '').trim();
+    if (!normalized) return;
+    const num = Number(normalized.replace(/^[^0-9]+/, '')) || Number(normalized) || 0;
+    if (!num || !Number.isFinite(num)) return;
+    ids.add(num);
+  });
+  return ids;
+})();
 
 function adminCanManageSalonFront(salonId){
   if (ADMIN_ALL_ACCESS || ADMIN_IS_GENERAL) return true;

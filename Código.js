@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v9.7-2025-11-05';
+const APP_VERSION = 'salones-v9.8-2025-11-05';
 
 const ADMIN_CFG_OVERRIDABLE_KEYS = {
   ADMIN_EMAILS: true,
