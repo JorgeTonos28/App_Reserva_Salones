@@ -91,6 +91,24 @@ function normalizeHHMM(str){
   return `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}`;
 }
 
+function hhmmToMinutes(str){
+  const m = String(str||'').trim().match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!m) return NaN;
+  const h = parseInt(m[1], 10) || 0;
+  const mi = parseInt(m[2], 10) || 0;
+  return (Math.max(0, h) * 60) + Math.max(0, Math.min(59, mi));
+}
+
+function normalizeAdminIdClient(val){
+  const raw = String(val||'').trim();
+  if (!raw) return '1';
+  const num = Number(raw);
+  if (isFinite(num) && num > 0){
+    return String(Math.floor(num));
+  }
+  return raw;
+}
+
 function parseSalonRestrictionMeta(raw){
   const text = String(raw||'').trim();
   if (!text) return { intervals:[], requiresApproval:false, raw:'' };
@@ -560,7 +578,22 @@ function refreshSlotsAdmin(){
       if (my!==_admReqSeq) return;
       Busy.hide();
 
-      const arr = Array.isArray(r && r.data) ? r.data : [];
+      let arr = Array.isArray(r && r.data) ? r.data : [];
+
+      const cfgSalon = (__SALON_CFG_MAP__||{})[salon];
+      if (cfgSalon){
+        const cfgIni = hhmmToMinutes(cfgSalon.horario_inicio);
+        const cfgFin = hhmmToMinutes(cfgSalon.horario_fin);
+        if (!isNaN(cfgIni) && !isNaN(cfgFin) && cfgFin > cfgIni){
+          arr = arr.filter(s => {
+            const iniMin = hhmmToMinutes(s.inicio);
+            const finMin = hhmmToMinutes(s.fin);
+            if (isNaN(iniMin) || isNaN(finMin)) return true;
+            return iniMin >= cfgIni && finMin <= cfgFin;
+          });
+        }
+      }
+
       __SLOT_INFO_ADMIN__ = {};
       arr.forEach(s => { __SLOT_INFO_ADMIN__[s.inicio] = s; });
       if (typeof window !== 'undefined'){ window.__SLOT_INFO_ADMIN__ = __SLOT_INFO_ADMIN__; }
@@ -583,6 +616,7 @@ function refreshSlotsAdmin(){
       const first = '<option value="">[Seleccionar]</option>';
       const opts = filtered.map(s=>{
         const ocupado = !s.disponible;
+        const otraAdmin = !!s.otraAdministracion;
         const rawMax = (s.maxPrio==null || s.maxPrio==='') ? null : Number(s.maxPrio);
         const maxP = (Number.isFinite ? Number.isFinite(rawMax) : isFinite(rawMax)) ? rawMax : null;
         const puede = !!s.seleccionable;
@@ -602,6 +636,9 @@ function refreshSlotsAdmin(){
           } else {
             note = ' (ocupado – puedes reasignar)';
           }
+        }
+        if (otraAdmin){
+          note = ' (reservado – coordinar otra administración)';
         }
         if (esRestriccion){
           note = ' (horario restringido)';
@@ -662,6 +699,8 @@ function verifySelectedSlotAdmin(){
         const motivo = String(r.motivo||'').toUpperCase();
         if (motivo === 'RESTRICCION'){
           modal('Este salón no permite reservas en el horario seleccionado. Elige otro intervalo.');
+        } else if (motivo === 'ADMIN_OTRO'){
+          modal('Este horario pertenece a otra administración. Coordina con el equipo responsable antes de reagendar.');
         } else {
           modal('Ese intervalo ya no está disponible.');
         }
@@ -711,7 +750,12 @@ function crearReservaAdmin(){
           return modal('No se pudo confirmar la disponibilidad.');
         }
         if (!r.disponible){
-          modal('Ese intervalo ya está reservado. Por favor elige otro.');
+          const motivo = String(r.motivo||'').toUpperCase();
+          if (motivo === 'ADMIN_OTRO'){
+            modal('Este horario pertenece a otra administración. Coordina con el equipo responsable para liberarlo.');
+          } else {
+            modal('Ese intervalo ya está reservado. Por favor elige otro.');
+          }
           const sel = $('#a-hora');
           const opt = sel && sel.querySelector ? sel.querySelector(`option[value="${p.hora_inicio}"]`) : null;
           if (opt) opt.disabled = true;
@@ -791,8 +835,12 @@ function showBlockedSlotMessageAdmin(slotInfo){
   const rawMaxPrio = (slotInfo.maxPrio == null || slotInfo.maxPrio === '') ? null : Number(slotInfo.maxPrio);
   const maxPrio = (Number.isFinite ? Number.isFinite(rawMaxPrio) : isFinite(rawMaxPrio)) ? rawMaxPrio : null;
   const usuarioTieneMenorPrioridad = maxPrio !== null && userPrio < maxPrio;
+  const hayOtraAdmin = ocupantes.some(o => normalizeAdminIdClient(o.administracion_id) !== ADMIN_SCOPE);
 
-  if ((!hayEventoExterno && !hayMismaPrioridad) || (usuarioTieneMenorPrioridad && !hayMismaPrioridad)) {
+  if (!hayEventoExterno && !hayMismaPrioridad && !hayOtraAdmin) {
+    return false;
+  }
+  if (usuarioTieneMenorPrioridad && !hayMismaPrioridad && !hayOtraAdmin) {
     return false;
   }
 
@@ -813,6 +861,16 @@ function showBlockedSlotMessageAdmin(slotInfo){
       <p>Este horario ya está reservado para un evento con público externo o mixto.</p>
       ${listaHtml}
       <p>Debes coordinar con la(s) persona(s) anfitriona(s) para que cancelen la reserva antes de agendar este horario.</p>
+    `;
+    modal(html, 'Horario reservado', { html: true });
+    return true;
+  }
+
+  if (hayOtraAdmin){
+    const html = `
+      <p>Este horario pertenece a otra administración.</p>
+      ${listaHtml}
+      <p>Debes coordinar con el equipo responsable para que liberen el espacio antes de continuar.</p>
     `;
     modal(html, 'Horario reservado', { html: true });
     return true;

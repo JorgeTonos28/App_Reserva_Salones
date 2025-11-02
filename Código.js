@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.4-2025-11-07';
+const APP_VERSION = 'salones-v10.5-2025-11-07';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -665,6 +665,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
 
     const me = getUser_();
     const prioAplicada = effectivePriorityForSalon_(me, salonId);
+    const userScope = adminScopeForUser_(me);
+    const isAdminUser = !!(me && String(me.rol||'').toUpperCase()==='ADMIN' && String(me.estado||'').toUpperCase()==='ACTIVO');
     userPrio = Number(prioAplicada||0);
 
     var startMin = toMin_(HINI);
@@ -695,7 +697,7 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
     var ocupados = [];
     var sh = SS.getSheetByName('Reservas');
     if (sh && sh.getLastRow() >= 2) {
-      var lr = sh.getLastRow(), lc = Math.max(22, sh.getLastColumn());
+      var lr = sh.getLastRow(), lc = Math.max(24, sh.getLastColumn());
       var values = sh.getRange(2, 1, lr - 1, lc).getValues();
       for (var i=0; i<values.length; i++){
         var r = values[i];
@@ -711,8 +713,9 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var nombre = String(r[10]||'');
         var evento = String(r[13]||'');
         var publico = String(r[14]||'');
+        var adminReserva = normalizeAdminId_(r[23]||adminId);
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico, estado: estado });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico, estado: estado, administracion_id: adminReserva });
         }
       }
     }
@@ -744,8 +747,21 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
           motivoConciliacion = 'MISMA_PRIORIDAD';
         }
       }
+      var hayOtraAdmin = false;
+      if (isAdminUser && hayConflicto){
+        hayOtraAdmin = conflictos.some(function(c){
+          return normalizeAdminId_(c.administracion_id || adminId) !== userScope;
+        });
+      }
+      if (hayOtraAdmin){
+        requiereConciliacion = true;
+        motivoConciliacion = 'ADMIN_OTRO';
+      }
       var puedeReasignar = hayConflicto && !requiereConciliacion && (userPrio > maxPrio);
       var seleccionable = (!hayConflicto || puedeReasignar) && !esRestriccion;
+      if (hayOtraAdmin && !esRestriccion){
+        seleccionable = true;
+      }
       var disponible = !hayConflicto && !esRestriccion;
       var info = {
         inicio: s.inicio,
@@ -755,6 +771,7 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         seleccionable: seleccionable,
         requiereConciliacion: requiereConciliacion,
         motivoConciliacion: motivoConciliacion,
+        otraAdministracion: hayOtraAdmin,
         ocupantes: conflictos.map(function(c){
           return {
             prioridad: Number(c.prio||0),
@@ -764,7 +781,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
             publico_tipo: c.publico || '',
             inicio: c.ini,
             fin: c.fin,
-            estado: c.estado || ''
+            estado: c.estado || '',
+            administracion_id: normalizeAdminId_(c.administracion_id || adminId)
           };
         })
       };
@@ -831,16 +849,24 @@ function apiCheckSlot(fechaStr, salonId, horaInicio, duracionMin, userPrio){
 
     const me = getUser_();
     const prioAplicada = effectivePriorityForSalon_(me, salonId);
+    const userScope = adminScopeForUser_(me);
+    const isAdminUser = !!(me && String(me.rol||'').toUpperCase()==='ADMIN' && String(me.estado||'').toUpperCase()==='ACTIVO');
 
     var conflictStates = restr.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
     var conflicts = getConflicts_(fechaStr, salonId, hIni, horaFin, conflictStates);
     var maxPrio =  conflicts.reduce((m,c)=>Math.max(m, Number(c.prioridad||0)), -1);
     var hayEventoExterno = conflicts.some(function(c){ return isPublicoExternoOMixto_(c.publico_tipo); });
     var hayPendiente = conflicts.some(function(c){ return String(c.estado||'').toUpperCase()==='PENDIENTE'; });
+    var hayOtraAdmin = isAdminUser && conflicts.some(function(c){
+      return normalizeAdminId_(c.administracion_id || adminId) !== userScope;
+    });
     userPrio = Number(prioAplicada||0);
     var disponible = (conflicts.length===0);
     if (hayPendiente){
       disponible = false;
+    }
+    if (hayOtraAdmin){
+      return { ok:true, disponible:false, motivo:'ADMIN_OTRO', requiereAprobacion: restr.requiresApproval || false };
     }
     if (!disponible){
       if (hayEventoExterno){
@@ -916,6 +942,8 @@ function apiCrearReserva(payload){
     // ---- Conflictos / prioridad
     // Prioridad del solicitante considerando salones permitidos (admins sin prioridad explícita => 2)
     const prioSolic = effectivePriorityForSalon_(me, sal.id);
+    const userScope = adminScopeForUser_(me);
+    const isAdminUser = !!(me && String(me.rol||'').toUpperCase()==='ADMIN' && String(me.estado||'').toUpperCase()==='ACTIVO');
 
     const conflictStates = restrSalon.requiresApproval ? ['APROBADA','PENDIENTE'] : ['APROBADA'];
     const conflicts = getConflicts_(fecha, sal.id, horaIni, horaFin, conflictStates);
@@ -930,6 +958,10 @@ function apiCrearReserva(payload){
     }
 
     if (conflicts.length){
+      const hayOtraAdmin = isAdminUser && conflicts.some(c => normalizeAdminId_(c.administracion_id || adminId) !== userScope);
+      if (hayOtraAdmin){
+        return { ok:false, msg:'Este horario ya está reservado por otra administración. Coordina con el equipo correspondiente para continuar.' };
+      }
       const tieneEventoExterno = conflicts.some(c => isPublicoExternoOMixto_(c.publico_tipo));
       if (tieneEventoExterno){
         return { ok:false, msg:'Ese intervalo está reservado para un evento con público externo o mixto. Deben coordinar con el anfitrión para liberar el espacio.' };
@@ -1052,7 +1084,8 @@ function getConflicts_(fecha, salonId, ini, fin, estados){
       evento: String(r[13]||''),
       publico_tipo: String(r[14]||''),
       inicio: hhmmFromCell_(r[4]),
-      fin: hhmmFromCell_(r[5])
+      fin: hhmmFromCell_(r[5]),
+      administracion_id: normalizeAdminId_(r[23]||'1')
     }));
 }
 
