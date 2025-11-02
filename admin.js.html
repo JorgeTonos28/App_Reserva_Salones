@@ -1,6 +1,30 @@
 <script>
 const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
+const ADMIN_SCOPE = String((ME && (ME.administracion_id || ME.admin_id || ME.adminScope || '1')) || '1').trim() || '1';
+const IS_GENERAL_ADMIN = ADMIN_SCOPE === '1';
+let __SALONES_ALL__ = [];
+let __SALONES_MANAGE__ = [];
+let __SALON_CFG_MAP__ = {};
+let __SLOT_INFO_ADMIN__ = {};
+const DEFAULT_DUR_CFG = {
+  min: Number(window.__DUR_MIN__ || 30),
+  max: Number(window.__DUR_MAX__ || 240),
+  step: Number(window.__DUR_STEP__ || 30)
+};
+function escHtml(str){
+  return String(str || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch] || ch));
+}
+function isPublicoExternoOMixto(tipo){
+  const t = String(tipo || '').trim().toLowerCase();
+  return t === 'externo' || t === 'mixto';
+}
 function getPrioridadSalonesAdmin(){
   const seen = {};
   const out = [];
@@ -31,7 +55,19 @@ function getEffectivePriorityForSalonAdmin(salonId){
   return list.includes(target) ? base : 0;
 }
 const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
-function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
+function modal(msg, title, opts){
+  $('#mTitle').textContent = title || 'Aviso';
+  const body = $('#mBody');
+  if (body){
+    if (opts && opts.html){
+      body.innerHTML = msg || '';
+    } else {
+      body.textContent = msg || '';
+    }
+  }
+  $('#modal').hidden = false;
+  $('#mOk').onclick = ()=> $('#modal').hidden = true;
+}
 
 let __CON_MAP__ = null; // { codigo: {nombre, email, ...} }
 function loadConserjeMap(cb){
@@ -53,6 +89,24 @@ function normalizeHHMM(str){
   const h = Math.max(0, Math.min(23, parseInt(m[1],10) || 0));
   const mi = Math.max(0, Math.min(59, parseInt(m[2],10) || 0));
   return `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}`;
+}
+
+function hhmmToMinutes(str){
+  const m = String(str||'').trim().match(/^(\d{1,2}):(\d{1,2})$/);
+  if (!m) return NaN;
+  const h = parseInt(m[1], 10) || 0;
+  const mi = parseInt(m[2], 10) || 0;
+  return (Math.max(0, h) * 60) + Math.max(0, Math.min(59, mi));
+}
+
+function normalizeAdminIdClient(val){
+  const raw = String(val||'').trim();
+  if (!raw) return '1';
+  const num = Number(raw);
+  if (isFinite(num) && num > 0){
+    return String(Math.floor(num));
+  }
+  return raw;
 }
 
 function parseSalonRestrictionMeta(raw){
@@ -145,14 +199,18 @@ function drawSalones(arr){
     if (meta.intervals && meta.intervals.length){ parts.push(`Horarios: ${meta.intervals.join(', ')}`); }
     if (meta.requiresApproval){ parts.push('Requiere aprobación manual'); }
     const restr = parts.length ? parts.join('<br/>') : '—';
+    const conserjeTxt = String(s.requiere_conserje||'SI').toUpperCase()==='SI' ? 'Sí' : 'No';
+    const adminTxt = String(s.administracion_id||'1');
     return `<tr>
       <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
       <td>${restr}</td>
+      <td>${conserjeTxt}</td>
+      <td>${adminTxt}</td>
       <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
       <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
 }
 function toggleSalon(id, on){ Busy.show('Guardando…'); google.script.run
@@ -275,35 +333,55 @@ function aprobarAdmin(id){
     .apiAprobarReservaAdmin(id);
 }
 
-function loadSalones(){ google.script.run
-  .withSuccessHandler(r=>{
-    const data = ((r&&r.data)||[]);
-    drawSalones(data);
-    // === NUEVO: mapa de capacidades para validación local ===
-    window.__SALON_CAPS__ = {};
-    window.__SALON_META_ADMIN__ = {};
-    data.forEach(s => {
-      window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
-      window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
-    });
-    // === NUEVO: poblar select del formulario Admin si existe ===
-    const sel = document.getElementById('a-salon');
-    if (sel){
-      const opts = ['<option value="">[Seleccionar]</option>']
-        .concat(data.map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
-      sel.innerHTML = opts.join('');
-      if (!sel.__metaListenerAttached){
-        sel.addEventListener('change', applyAdminSalonMetaHints);
-        sel.__metaListenerAttached = true;
-      }
-      applyAdminSalonMetaHints();
-    }
-    // limpia el tag de cap máx al cargar
-    const tag = document.getElementById('a-capMaxTag');
-    if (tag) tag.textContent = '';
-  })
-  .withFailureHandler(e=> modal('No se pudo cargar salones'))
-  .apiListSalones();
+function buildSalonCaches(all){
+  window.__SALON_CAPS__ = {};
+  window.__SALON_META_ADMIN__ = {};
+  __SALON_CFG_MAP__ = {};
+  (all||[]).forEach(s => {
+    window.__SALON_CAPS__[s.id] = Number(s.capacidad)||0;
+    window.__SALON_META_ADMIN__[s.id] = parseSalonRestrictionMeta(s.restriccion);
+    __SALON_CFG_MAP__[s.id] = {
+      duracion_min: Number(s.duracion_min||30),
+      duracion_max: Number(s.duracion_max||240),
+      duracion_step: Number(s.duracion_step||30),
+      horario_inicio: s.horario_inicio,
+      horario_fin: s.horario_fin
+    };
+  });
+}
+
+function populateSalonSelect(all){
+  const sel = document.getElementById('a-salon');
+  if (!sel) return;
+  const opts = ['<option value="">[Seleccionar]</option>']
+    .concat((all||[]).map(s => `<option value="${s.id}" ${s.habilitado ? '' : 'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`));
+  sel.innerHTML = opts.join('');
+  if (!sel.__metaListenerAttached){
+    sel.addEventListener('change', applyAdminSalonMetaHints);
+    sel.__metaListenerAttached = true;
+  }
+  applyAdminSalonMetaHints();
+}
+
+function loadSalones(){
+  google.script.run
+    .withSuccessHandler(r=>{
+      const payload = (r&&r.data) || {};
+      const manage = Array.isArray(payload.manage) ? payload.manage : [];
+      const all    = Array.isArray(payload.all) ? payload.all : manage.slice();
+      __SALONES_MANAGE__ = manage;
+      __SALONES_ALL__ = all;
+      drawSalones(manage);
+      buildSalonCaches(all);
+      populateSalonSelect(all);
+      initSalonCapacityAdmin(all);
+      renderDurationsFromConfigAdmin();
+      // limpia el tag de cap máx al cargar
+      const tag = document.getElementById('a-capMaxTag');
+      if (tag) tag.textContent = '';
+    })
+    .withFailureHandler(()=> modal('No se pudo cargar salones'))
+    .apiListSalonesAdmin();
 }
 
 function buscar(){
@@ -324,7 +402,17 @@ function init(){
   setDefaultAdminRange(30);
   loadConserjeMap(()=> buscar());
   $('#btnBuscar').onclick = buscar;
-  $('#btnConserjes').onclick = openConserjesModal;
+  if (IS_GENERAL_ADMIN){
+    const btnCon = document.getElementById('btnConserjes');
+    if (btnCon) btnCon.onclick = openConserjesModal;
+    const btnUsr = document.getElementById('btnUsuarios');
+    if (btnUsr) btnUsr.onclick = openUsuariosModal;
+  } else {
+    const btnCon = document.getElementById('btnConserjes');
+    if (btnCon) btnCon.style.display = 'none';
+    const btnUsr = document.getElementById('btnUsuarios');
+    if (btnUsr) btnUsr.style.display = 'none';
+  }
 
   // === Listeners de validación de capacidad en el formulario Admin ===
   const aSalon = document.getElementById('a-salon');
@@ -368,8 +456,6 @@ function init(){
       aCant.classList.toggle('input-error', bad);
     });
   }
-
-  $('#btnUsuarios').onclick  = openUsuariosModal;
 
   // ===== Crear reserva (Admin) =====
   bootCreateAdmin();
@@ -431,14 +517,10 @@ function bootCreateAdmin(){
   const ymd = `${y}-${m}-${d}`;
   const $f = $('#a-fecha'); if ($f){ $f.min = ymd; $f.value = ymd; }
   // Cargar salones
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      const sel = $('#a-salon');
-      sel.innerHTML = ['<option value="">[Seleccionar]</option>'].concat(data.map(s=>`<option value="${s.id}" ${s.habilitado?'':'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`)).join('');
-    })
-    .withFailureHandler(()=>{ /* noop */ })
-    .apiListSalones();
+  const selSalon = $('#a-salon');
+  if (selSalon){
+    selSalon.innerHTML = '<option value="">[Seleccionar]</option>';
+  }
   // Duraciones desde config (serán inyectadas por servidor en Public; aquí replicamos)
   renderDurationsFromConfigAdmin();
   // Eventos
@@ -473,8 +555,11 @@ function refreshSlotsAdmin(){
   const salon = $('#a-salon').value||'';
   const fecha = $('#a-fecha').value||'';
   const dur   = Number($('#a-dur').value||0);
+  const prio = getEffectivePriorityForSalonAdmin(salon);
   if(!salon||!fecha||!dur){
     $('#a-hora').innerHTML='';
+    __SLOT_INFO_ADMIN__ = {};
+    if (typeof window !== 'undefined'){ window.__SLOT_INFO_ADMIN__ = __SLOT_INFO_ADMIN__; }
     // limpia meta y hint si no hay salón/fecha/duración
     const tag = document.getElementById('a-capMaxTag');
     if (tag) tag.textContent = '';
@@ -493,7 +578,25 @@ function refreshSlotsAdmin(){
       if (my!==_admReqSeq) return;
       Busy.hide();
 
-      const arr = (r && r.data) || [];
+      let arr = Array.isArray(r && r.data) ? r.data : [];
+
+      const cfgSalon = (__SALON_CFG_MAP__||{})[salon];
+      if (cfgSalon){
+        const cfgIni = hhmmToMinutes(cfgSalon.horario_inicio);
+        const cfgFin = hhmmToMinutes(cfgSalon.horario_fin);
+        if (!isNaN(cfgIni) && !isNaN(cfgFin) && cfgFin > cfgIni){
+          arr = arr.filter(s => {
+            const iniMin = hhmmToMinutes(s.inicio);
+            const finMin = hhmmToMinutes(s.fin);
+            if (isNaN(iniMin) || isNaN(finMin)) return true;
+            return iniMin >= cfgIni && finMin <= cfgFin;
+          });
+        }
+      }
+
+      __SLOT_INFO_ADMIN__ = {};
+      arr.forEach(s => { __SLOT_INFO_ADMIN__[s.inicio] = s; });
+      if (typeof window !== 'undefined'){ window.__SLOT_INFO_ADMIN__ = __SLOT_INFO_ADMIN__; }
 
       // --- Filtrar horas pasadas cuando la fecha es hoy ---
       const todayYMD = (()=>{
@@ -510,27 +613,44 @@ function refreshSlotsAdmin(){
 
       const filtered = arr.filter(s => !isToday || toMin(s.inicio) > nowMin);
 
-      const opts = ['<option value="">[Seleccionar]</option>'].concat(filtered.map(s=>{
+      const first = '<option value="">[Seleccionar]</option>';
+      const opts = filtered.map(s=>{
+        const ocupado = !s.disponible;
+        const otraAdmin = !!s.otraAdministracion;
+        const rawMax = (s.maxPrio==null || s.maxPrio==='') ? null : Number(s.maxPrio);
+        const maxP = (Number.isFinite ? Number.isFinite(rawMax) : isFinite(rawMax)) ? rawMax : null;
         const puede = !!s.seleccionable;
+        const userLowerThanMax = maxP !== null && prio < maxP;
+        const motivo = String(s.motivoConciliacion || '').toUpperCase();
         let note = '';
-        if (!s.disponible && s.maxPrio!=null){
-          if (puede){
-            note = ' (ocupado – puedes reasignar)';
-          } else if (s.motivoConciliacion === 'PUBLICO_EXTERNO'){
-            note = ' (evento externo – coordinar)';
-          } else if (s.motivoConciliacion === 'MISMA_PRIORIDAD'){
-            note = ' (reservado – coordinar)';
+        const esRestriccion = !!s.restringido || String(s.motivoRestriccion||'').toUpperCase()==='RESTRICCION';
+        if (ocupado){
+          if (!puede){
+            if (motivo === 'PUBLICO_EXTERNO'){
+              note = userLowerThanMax ? ' (reservado)' : ' (evento externo – coordinar)';
+            } else if (motivo === 'MISMA_PRIORIDAD' && prio > 0){
+              note = ' (reservado – coordinar)';
+            } else if (userLowerThanMax || prio > 0 || maxP!=null) {
+              note = ' (reservado)';
+            }
           } else {
-            note = ' (reservado)';
+            note = ' (ocupado – puedes reasignar)';
           }
         }
-        const esRestriccion = !!s.restringido || String(s.motivoRestriccion||'').toUpperCase()==='RESTRICCION';
-        if (esRestriccion){ note = ' (horario restringido)'; }
-        const disabledAttr = (!puede || esRestriccion) ? 'disabled' : '';
-        return `<option value="${s.inicio}" ${disabledAttr}>${s.inicio} - ${s.fin}${note}</option>`;
-      }));
+        if (otraAdmin){
+          note = ' (reservado – coordinar otra administración)';
+        }
+        if (esRestriccion){
+          note = ' (horario restringido)';
+        }
+        const label = `${s.inicio} - ${s.fin}${note}`;
+        const disableOption = esRestriccion || (!puede && (userLowerThanMax || prio <= 0));
+        const disabledAttr = disableOption ? 'disabled' : '';
+        return `<option value="${s.inicio}" ${disabledAttr}>${label}</option>`;
+      }).join('');
 
-      $('#a-hora').innerHTML = opts.join('');
+      $('#a-hora').innerHTML = first + opts;
+      $('#a-hora').value = '';
       applyAdminSalonMetaHints();
 
       // === Actualizar el tag "(máx N)" en el label
@@ -564,18 +684,29 @@ function refreshSlotsAdmin(){
 function verifySelectedSlotAdmin(){
   const salon=$('#a-salon').value||''; const fecha=$('#a-fecha').value||''; const dur=Number($('#a-dur').value||0); const ini=$('#a-hora').value||'';
   if(!salon||!fecha||!dur||!ini) return;
+  const slotInfo = (__SLOT_INFO_ADMIN__||{})[ini];
+  if (showBlockedSlotMessageAdmin(slotInfo)){
+    $('#a-hora').value='';
+    return;
+  }
+  if (getEffectivePriorityForSalonAdmin(salon) > 0) return;
   Busy.show('Confirmando intervalo…');
   google.script.run
     .withSuccessHandler(r=>{
       Busy.hide();
       if(!r||!r.ok) return;
-      if(!r.disponible && !(2 > (r.maxPrio||0))){
+      if(!r.disponible){
         const motivo = String(r.motivo||'').toUpperCase();
         if (motivo === 'RESTRICCION'){
           modal('Este salón no permite reservas en el horario seleccionado. Elige otro intervalo.');
+        } else if (motivo === 'ADMIN_OTRO'){
+          modal('Este horario pertenece a otra administración. Coordina con el equipo responsable antes de reagendar.');
         } else {
           modal('Ese intervalo ya no está disponible.');
         }
+        const sel = $('#a-hora');
+        const opt = sel && sel.querySelector ? sel.querySelector(`option[value="${ini}"]`) : null;
+        if (opt) opt.disabled = true;
         $('#a-hora').value='';
         scheduleRefreshSlotsAdmin();
       }
@@ -604,6 +735,43 @@ function crearReservaAdmin(){
     const hint = document.getElementById('a-emailError'); if (hint) hint.hidden = false;
     return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
   }
+  const slotInfo = (__SLOT_INFO_ADMIN__||{})[p.hora_inicio];
+  if (showBlockedSlotMessageAdmin(slotInfo)){
+    $('#a-hora').value='';
+    return;
+  }
+  const prioSalon = getEffectivePriorityForSalonAdmin(p.salon_id);
+  if (prioSalon <= 0){
+    Busy.show('Verificando disponibilidad…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        if (!r || r.ok !== true){
+          return modal('No se pudo confirmar la disponibilidad.');
+        }
+        if (!r.disponible){
+          const motivo = String(r.motivo||'').toUpperCase();
+          if (motivo === 'ADMIN_OTRO'){
+            modal('Este horario pertenece a otra administración. Coordina con el equipo responsable para liberarlo.');
+          } else {
+            modal('Ese intervalo ya está reservado. Por favor elige otro.');
+          }
+          const sel = $('#a-hora');
+          const opt = sel && sel.querySelector ? sel.querySelector(`option[value="${p.hora_inicio}"]`) : null;
+          if (opt) opt.disabled = true;
+          sel.value = '';
+          scheduleRefreshSlotsAdmin();
+          return;
+        }
+        crearReservaAdminSubmit(p);
+      })
+      .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo confirmar la disponibilidad.'); });
+    return;
+  }
+  crearReservaAdminSubmit(p);
+}
+
+function crearReservaAdminSubmit(payload){
   Busy.show('Creando reserva…');
   google.script.run
     .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){
@@ -620,38 +788,123 @@ function crearReservaAdmin(){
       applyAdminSalonMetaHints();
     } else { modal((r&&r.msg)||'No se pudo crear'); } })
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
-    .apiCrearReserva(p);
+    .apiCrearReserva(payload);
 }
+function getDurationConfigForSalonAdmin(salonId){
+  const cfg = (__SALON_CFG_MAP__||{})[salonId];
+  if (!cfg) return { ...DEFAULT_DUR_CFG };
+  return {
+    min: Number(cfg.duracion_min || DEFAULT_DUR_CFG.min),
+    max: Number(cfg.duracion_max || DEFAULT_DUR_CFG.max),
+    step: Number(cfg.duracion_step || DEFAULT_DUR_CFG.step)
+  };
+}
+
 function renderDurationsFromConfigAdmin(){
   const sel = $('#a-dur');
-  const min  = Number(window.__DUR_MIN__ || 30);
-  const max  = Number(window.__DUR_MAX__ || 240);
-  const step = Number(window.__DUR_STEP__ || 30);
+  if (!sel) return;
+  const salonId = ($('#a-salon') && $('#a-salon').value) || '';
+  const cfg = getDurationConfigForSalonAdmin(salonId);
+  const min = Math.max(1, Number(cfg.min || DEFAULT_DUR_CFG.min));
+  const max = Math.max(min, Number(cfg.max || min));
+  const step = Math.max(1, Number(cfg.step || DEFAULT_DUR_CFG.step));
   const opts = ['<option value="">[Seleccionar]</option>'];
   for (let d=min; d<=max; d+=step){
     const label = (d<60)? `${d} minutos` : (d%60===0? `${d/60} ${d===60?'hora':'horas'}` : `${Math.floor(d/60)} horas ${d%60} min`);
     opts.push(`<option value="${d}">${label}</option>`);
   }
   sel.innerHTML = opts.join('');
+  sel.value = '';
+}
+
+function showBlockedSlotMessageAdmin(slotInfo){
+  if (!slotInfo) return false;
+
+  if (slotInfo.restringido || String(slotInfo.motivoRestriccion||'').toUpperCase()==='RESTRICCION'){
+    modal('Este horario está restringido para este salón. Selecciona otro intervalo.');
+    return true;
+  }
+
+  const currentSalonEl = $('#a-salon');
+  const currentSalonId = currentSalonEl ? (currentSalonEl.value || '') : '';
+  const userPrio = getEffectivePriorityForSalonAdmin(currentSalonId);
+  const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
+  const motivo = String(slotInfo.motivoConciliacion || '').toUpperCase();
+  const hayEventoExterno = (motivo === 'PUBLICO_EXTERNO') || ocupantes.some(o => isPublicoExternoOMixto(o.publico_tipo));
+  const hayMismaPrioridad = (motivo === 'MISMA_PRIORIDAD') || ocupantes.some(o => Number(o.prioridad || 0) === userPrio);
+  const rawMaxPrio = (slotInfo.maxPrio == null || slotInfo.maxPrio === '') ? null : Number(slotInfo.maxPrio);
+  const maxPrio = (Number.isFinite ? Number.isFinite(rawMaxPrio) : isFinite(rawMaxPrio)) ? rawMaxPrio : null;
+  const usuarioTieneMenorPrioridad = maxPrio !== null && userPrio < maxPrio;
+  const hayOtraAdmin = ocupantes.some(o => normalizeAdminIdClient(o.administracion_id) !== ADMIN_SCOPE);
+
+  if (!hayEventoExterno && !hayMismaPrioridad && !hayOtraAdmin) {
+    return false;
+  }
+  if (usuarioTieneMenorPrioridad && !hayMismaPrioridad && !hayOtraAdmin) {
+    return false;
+  }
+
+  const items = ocupantes.map(o => {
+    const nombre = escHtml(o.nombre || o.email || 'Reservante');
+    const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+    const evento = o.evento ? `<div class="muted">Evento: ${escHtml(o.evento)}</div>` : '';
+    const publico = o.publico_tipo ? `<div class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</div>` : '';
+    const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
+    const prioridad = escHtml(String(o.prioridad || 0));
+    return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+  }).join('');
+
+  const listaHtml = items ? `<ul style="padding-left:18px;margin:8px 0;">${items}</ul>` : '';
+
+  if (hayEventoExterno){
+    const html = `
+      <p>Este horario ya está reservado para un evento con público externo o mixto.</p>
+      ${listaHtml}
+      <p>Debes coordinar con la(s) persona(s) anfitriona(s) para que cancelen la reserva antes de agendar este horario.</p>
+    `;
+    modal(html, 'Horario reservado', { html: true });
+    return true;
+  }
+
+  if (hayOtraAdmin){
+    const html = `
+      <p>Este horario pertenece a otra administración.</p>
+      ${listaHtml}
+      <p>Debes coordinar con el equipo responsable para que liberen el espacio antes de continuar.</p>
+    `;
+    modal(html, 'Horario reservado', { html: true });
+    return true;
+  }
+
+  if (userPrio <= 0) return false;
+
+  const html = `
+    <p>Este horario ya está reservado por otra persona con la misma prioridad.</p>
+    ${listaHtml}
+    <p>Debes coordinar con la otra parte para que cancele su reserva y puedas agendar este horario.</p>
+  `;
+  modal(html, 'Horario reservado', { html: true });
+  return true;
 }
 
 // ===== Capacidad (Admin) =====
 let __SALON_MAP_ADMIN__ = {}; // { id: {capacidad, nombre} }
-function initSalonCapacityAdmin(){
-  // Construye mapa local de capacidades
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      __SALON_MAP_ADMIN__ = {};
-      data.forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
+let __CAP_LISTENER_BOUND__ = false;
+function initSalonCapacityAdmin(all){
+  const dataset = Array.isArray(all) ? all : (__SALONES_ALL__ || []);
+  __SALON_MAP_ADMIN__ = {};
+  (dataset||[]).forEach(s=>{ __SALON_MAP_ADMIN__[s.id] = { cap: Number(s.capacidad||0), nombre: s.nombre }; });
+  syncCapLabelAdmin();
+  hookCantValidationAdmin();
+  const salonSel = document.getElementById('a-salon');
+  if (salonSel && !__CAP_LISTENER_BOUND__){
+    salonSel.addEventListener('change', ()=>{
       syncCapLabelAdmin();
-      hookCantValidationAdmin();
-    })
-    .withFailureHandler(()=>{ __SALON_MAP_ADMIN__ = {}; syncCapLabelAdmin(); hookCantValidationAdmin(); })
-    .apiListSalones();
-  $('#a-salon').addEventListener('change', syncCapLabelAdmin);
+      renderDurationsFromConfigAdmin();
+    });
+    __CAP_LISTENER_BOUND__ = true;
+  }
 
-  // También esconder hint al cambiar de salón
   const err = document.getElementById('a-cantError');
   if (err) err.hidden = true;
 }
@@ -691,6 +944,7 @@ function hookCantValidationAdmin(){
 
 // ===== Usuarios (modal) =====
 function openUsuariosModal(){
+  if (!IS_GENERAL_ADMIN) return;
   const modal = document.getElementById('modalUsers');
   const listEl = document.getElementById('users-list');
   let selected = null; // objeto usuario seleccionado
@@ -705,9 +959,10 @@ function openUsuariosModal(){
         <td>${u.prioridad_salones||''}</td>
         <td>${u.estado||''}</td>
         <td>${u.extension||''}</td>
+        <td>${u.administracion_id||'1'}</td>
       </tr>
     `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th></tr></thead><tbody>${rows}</tbody></table>`;
+    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -727,7 +982,7 @@ function openUsuariosModal(){
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-admin'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
   };
@@ -740,6 +995,7 @@ function openUsuariosModal(){
     document.getElementById('u-prio-salones').value = u?.prioridad_salones||'';
     document.getElementById('u-estado').value = u?.estado||'';
     document.getElementById('u-ext').value = u?.extension||'';
+    document.getElementById('u-admin').value = u?.administracion_id || '';
   };
   const load = ()=>{
     Busy.show('Cargando usuarios…');
@@ -757,7 +1013,8 @@ function openUsuariosModal(){
       prioridad:Number(document.getElementById('u-prio').value||0),
       prioridad_salones: document.getElementById('u-prio-salones').value.trim(),
       estado:   document.getElementById('u-estado').value.trim(),
-      extension:document.getElementById('u-ext').value.trim()
+      extension:document.getElementById('u-ext').value.trim(),
+      administracion_id: (document.getElementById('u-admin').value || '1').trim()
     };
     if (!payload.email) return modalMsg('Correo es obligatorio.');
     // Si hay selección y no hay cambios → no-op
@@ -769,7 +1026,8 @@ function openUsuariosModal(){
         Number(selected.prioridad||0)===payload.prioridad &&
         (String(selected.prioridad_salones||'').trim()===payload.prioridad_salones) &&
         (selected.estado||'')===payload.estado &&
-        (selected.extension||'')===payload.extension){
+        (selected.extension||'')===payload.extension &&
+        (String(selected.administracion_id||'1')===String(payload.administracion_id||'1'))){
       clearUserForm();
       const rows = listEl.querySelectorAll('.u-row'); rows.forEach(x=>x.classList.remove('selected')); selected=null;
       return modalMsg('No hay cambios que guardar.');
@@ -792,6 +1050,7 @@ function openUsuariosModal(){
 // Lógica modal conserjes y asignar conserjes
 
 function openConserjesModal(){
+  if (!IS_GENERAL_ADMIN) return;
   const modalEl = document.getElementById('modalCon');
   const listEl  = document.getElementById('con-list');
 
