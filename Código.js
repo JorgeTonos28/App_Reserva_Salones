@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.5-2025-11-07';
+const APP_VERSION = 'salones-v10.6-2025-11-07';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -132,13 +132,39 @@ function fmt12_(hhmm){
 }
 
 // ========= Config =========
+const __CFG_SHEETS_CACHE__ = {};
+
+function loadConfigSheet_(sheetName){
+  const sh = SS.getSheetByName(sheetName);
+  if (!sh) return { signature: '', map: {}, lower: {} };
+  const lr = sh.getLastRow();
+  const lc = sh.getLastColumn();
+  const rows = (lr >= 2 && lc >= 2) ? sh.getRange(2, 1, lr - 1, 2).getValues() : [];
+  const signature = JSON.stringify(rows);
+  const cached = __CFG_SHEETS_CACHE__[sheetName];
+  if (cached && cached.signature === signature) return cached;
+  const map = {};
+  const lower = {};
+  rows.forEach(row => {
+    const rawKey = String(row[0] || '').trim();
+    if (!rawKey) return;
+    const value = String(row[1] || '').trim();
+    map[rawKey] = value;
+    lower[rawKey.toLowerCase()] = value;
+  });
+  const entry = { signature, map, lower };
+  __CFG_SHEETS_CACHE__[sheetName] = entry;
+  return entry;
+}
+
 function cfg_(key){
-  if (!SH_CFG) return '';
-  const lr = SH_CFG.getLastRow();
-  if (lr<2) return '';
-  const vals = SH_CFG.getRange(2,1,lr-1,2).getValues();
-  const r = vals.find(v => String(v[0]).trim()===key);
-  return r ? String(r[1]).trim() : '';
+  const normKey = String(key || '').trim();
+  if (!normKey) return '';
+  const cache = loadConfigSheet_('Config');
+  if (Object.prototype.hasOwnProperty.call(cache.map, normKey)) {
+    return cache.map[normKey];
+  }
+  return cache.lower[normKey.toLowerCase()] || '';
 }
 
 const ADMIN_ALT_CFG_KEYS = Object.freeze({
@@ -155,7 +181,6 @@ const ADMIN_ALT_CFG_KEYS = Object.freeze({
   ADMIN_CONTACT_EXTENSION:true
 });
 
-const __ADMIN_CFG_CACHE__ = {};
 const __ADMIN_RUNTIME_CACHE__ = {};
 
 function sheetHeaders_(sh){
@@ -189,24 +214,14 @@ function normalizeAdminId_(id){
 }
 
 function cfgSheetLookup_(sheetName, key){
-  const cacheKey = sheetName + '::' + key;
-  if (cacheKey in __ADMIN_CFG_CACHE__) return __ADMIN_CFG_CACHE__[cacheKey];
-  const sh = SS.getSheetByName(sheetName);
-  if (!sh){
-    __ADMIN_CFG_CACHE__[cacheKey] = '';
-    return '';
+  const normKey = String(key || '').trim();
+  if (!normKey) return '';
+  const cache = loadConfigSheet_(sheetName);
+  if (!cache) return '';
+  if (Object.prototype.hasOwnProperty.call(cache.map, normKey)) {
+    return cache.map[normKey];
   }
-  const lr = sh.getLastRow();
-  if (lr < 2){
-    __ADMIN_CFG_CACHE__[cacheKey] = '';
-    return '';
-  }
-  const vals = sh.getRange(2,1,lr-1,2).getValues();
-  const lookup = String(key || '').trim().toLowerCase();
-  const row = vals.find(v => String(v[0]).trim().toLowerCase() === lookup);
-  const val = row ? String(row[1]).trim() : '';
-  __ADMIN_CFG_CACHE__[cacheKey] = val;
-  return val;
+  return cache.lower[normKey.toLowerCase()] || '';
 }
 
 function adminConfigSheetName_(adminId){
@@ -223,19 +238,53 @@ function cfgForAdmin_(adminId, key){
     return cfg_(normKey);
   }
   const sheetName = adminConfigSheetName_(id);
-  if (!sheetName) return cfg_(normKey);
-  const raw = cfgSheetLookup_(sheetName, normKey);
-  return raw !== '' ? raw : cfg_(normKey);
+  const cache = loadConfigSheet_(sheetName);
+  let val = '';
+  if (cache){
+    if (Object.prototype.hasOwnProperty.call(cache.map, normKey)){
+      val = cache.map[normKey];
+    } else {
+      val = cache.lower[normKey.toLowerCase()] || '';
+    }
+  }
+  return val !== '' ? val : cfg_(normKey);
 }
 
 function getAdminRuntimeCfg_(adminId){
   const id = normalizeAdminId_(adminId);
-  if (__ADMIN_RUNTIME_CACHE__[id]) return __ADMIN_RUNTIME_CACHE__[id];
-  const horarioInicio = normHHMM_(cfgForAdmin_(id, 'HORARIO_INICIO') || '07:00') || '07:00';
-  const horarioFin    = normHHMM_(cfgForAdmin_(id, 'HORARIO_FIN')    || '20:00') || '20:00';
-  const durMin  = Number(cfgForAdmin_(id, 'DURATION_MIN')  || cfg_('DURATION_MIN')  || 30) || 30;
-  const durMax  = Number(cfgForAdmin_(id, 'DURATION_MAX')  || cfg_('DURATION_MAX')  || 240) || 240;
-  const durStep = Number(cfgForAdmin_(id, 'DURATION_STEP') || cfg_('DURATION_STEP') || 30) || 30;
+  const baseCache = loadConfigSheet_('Config');
+  const altSheetName = adminConfigSheetName_(id);
+  const altCache = (id === '1') ? { signature: '', map: {}, lower: {} } : loadConfigSheet_(altSheetName);
+  const signature = String(baseCache && baseCache.signature || '') + '|' + String(altCache && altCache.signature || '');
+  const cached = __ADMIN_RUNTIME_CACHE__[id];
+  if (cached && cached.signature === signature) return cached.data;
+  const lookup = (key) => {
+    const norm = String(key || '').trim();
+    if (!norm) return '';
+    if (id !== '1' && ADMIN_ALT_CFG_KEYS[norm]){
+      if (altCache){
+        if (Object.prototype.hasOwnProperty.call(altCache.map, norm)){
+          const val = altCache.map[norm];
+          if (val !== '') return val;
+        }
+        const altLower = altCache.lower[norm.toLowerCase()];
+        if (altLower !== undefined && altLower !== '') return altLower;
+      }
+    }
+    if (baseCache){
+      if (Object.prototype.hasOwnProperty.call(baseCache.map, norm)){
+        return baseCache.map[norm];
+      }
+      const baseLower = baseCache.lower[norm.toLowerCase()];
+      if (baseLower !== undefined) return baseLower;
+    }
+    return '';
+  };
+  const horarioInicio = normHHMM_(lookup('HORARIO_INICIO') || '07:00') || '07:00';
+  const horarioFin    = normHHMM_(lookup('HORARIO_FIN')    || '20:00') || '20:00';
+  const durMin  = Number(lookup('DURATION_MIN')  || cfg_('DURATION_MIN')  || 30) || 30;
+  const durMax  = Number(lookup('DURATION_MAX')  || cfg_('DURATION_MAX')  || 240) || 240;
+  const durStep = Number(lookup('DURATION_STEP') || cfg_('DURATION_STEP') || 30) || 30;
   const cfgObj = {
     horarioInicio,
     horarioFin,
@@ -243,7 +292,7 @@ function getAdminRuntimeCfg_(adminId){
     duracionMax: Math.max(Math.max(1, durMin), durMax),
     duracionStep: Math.max(1, durStep)
   };
-  __ADMIN_RUNTIME_CACHE__[id] = cfgObj;
+  __ADMIN_RUNTIME_CACHE__[id] = { signature, data: cfgObj };
   return cfgObj;
 }
 
