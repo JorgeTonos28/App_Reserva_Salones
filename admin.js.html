@@ -6,11 +6,25 @@ const IS_GENERAL_ADMIN = ADMIN_SCOPE === '1';
 let __SALONES_ALL__ = [];
 let __SALONES_MANAGE__ = [];
 let __SALON_CFG_MAP__ = {};
+let __SLOT_INFO_ADMIN__ = {};
 const DEFAULT_DUR_CFG = {
   min: Number(window.__DUR_MIN__ || 30),
   max: Number(window.__DUR_MAX__ || 240),
   step: Number(window.__DUR_STEP__ || 30)
 };
+function escHtml(str){
+  return String(str || '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch] || ch));
+}
+function isPublicoExternoOMixto(tipo){
+  const t = String(tipo || '').trim().toLowerCase();
+  return t === 'externo' || t === 'mixto';
+}
 function getPrioridadSalonesAdmin(){
   const seen = {};
   const out = [];
@@ -41,7 +55,19 @@ function getEffectivePriorityForSalonAdmin(salonId){
   return list.includes(target) ? base : 0;
 }
 const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
-function modal(msg, title){ $('#mTitle').textContent=title||'Aviso'; $('#mBody').textContent=msg||''; $('#modal').hidden=false; $('#mOk').onclick=()=>$('#modal').hidden=true; }
+function modal(msg, title, opts){
+  $('#mTitle').textContent = title || 'Aviso';
+  const body = $('#mBody');
+  if (body){
+    if (opts && opts.html){
+      body.innerHTML = msg || '';
+    } else {
+      body.textContent = msg || '';
+    }
+  }
+  $('#modal').hidden = false;
+  $('#mOk').onclick = ()=> $('#modal').hidden = true;
+}
 
 let __CON_MAP__ = null; // { codigo: {nombre, email, ...} }
 function loadConserjeMap(cb){
@@ -473,14 +499,10 @@ function bootCreateAdmin(){
   const ymd = `${y}-${m}-${d}`;
   const $f = $('#a-fecha'); if ($f){ $f.min = ymd; $f.value = ymd; }
   // Cargar salones
-  google.script.run
-    .withSuccessHandler(r=>{
-      const data = (r&&r.data)||[];
-      const sel = $('#a-salon');
-      sel.innerHTML = ['<option value="">[Seleccionar]</option>'].concat(data.map(s=>`<option value="${s.id}" ${s.habilitado?'':'disabled'}>${s.nombre}${s.habilitado?'':' (Deshabilitado)'}</option>`)).join('');
-    })
-    .withFailureHandler(()=>{ /* noop */ })
-    .apiListSalones();
+  const selSalon = $('#a-salon');
+  if (selSalon){
+    selSalon.innerHTML = '<option value="">[Seleccionar]</option>';
+  }
   // Duraciones desde config (serán inyectadas por servidor en Public; aquí replicamos)
   renderDurationsFromConfigAdmin();
   // Eventos
@@ -515,8 +537,11 @@ function refreshSlotsAdmin(){
   const salon = $('#a-salon').value||'';
   const fecha = $('#a-fecha').value||'';
   const dur   = Number($('#a-dur').value||0);
+  const prio = getEffectivePriorityForSalonAdmin(salon);
   if(!salon||!fecha||!dur){
     $('#a-hora').innerHTML='';
+    __SLOT_INFO_ADMIN__ = {};
+    if (typeof window !== 'undefined'){ window.__SLOT_INFO_ADMIN__ = __SLOT_INFO_ADMIN__; }
     // limpia meta y hint si no hay salón/fecha/duración
     const tag = document.getElementById('a-capMaxTag');
     if (tag) tag.textContent = '';
@@ -535,7 +560,10 @@ function refreshSlotsAdmin(){
       if (my!==_admReqSeq) return;
       Busy.hide();
 
-      const arr = (r && r.data) || [];
+      const arr = Array.isArray(r && r.data) ? r.data : [];
+      __SLOT_INFO_ADMIN__ = {};
+      arr.forEach(s => { __SLOT_INFO_ADMIN__[s.inicio] = s; });
+      if (typeof window !== 'undefined'){ window.__SLOT_INFO_ADMIN__ = __SLOT_INFO_ADMIN__; }
 
       // --- Filtrar horas pasadas cuando la fecha es hoy ---
       const todayYMD = (()=>{
@@ -552,27 +580,40 @@ function refreshSlotsAdmin(){
 
       const filtered = arr.filter(s => !isToday || toMin(s.inicio) > nowMin);
 
-      const opts = ['<option value="">[Seleccionar]</option>'].concat(filtered.map(s=>{
+      const first = '<option value="">[Seleccionar]</option>';
+      const opts = filtered.map(s=>{
+        const ocupado = !s.disponible;
+        const rawMax = (s.maxPrio==null || s.maxPrio==='') ? null : Number(s.maxPrio);
+        const maxP = (Number.isFinite ? Number.isFinite(rawMax) : isFinite(rawMax)) ? rawMax : null;
         const puede = !!s.seleccionable;
+        const userLowerThanMax = maxP !== null && prio < maxP;
+        const motivo = String(s.motivoConciliacion || '').toUpperCase();
         let note = '';
-        if (!s.disponible && s.maxPrio!=null){
-          if (puede){
-            note = ' (ocupado – puedes reasignar)';
-          } else if (s.motivoConciliacion === 'PUBLICO_EXTERNO'){
-            note = ' (evento externo – coordinar)';
-          } else if (s.motivoConciliacion === 'MISMA_PRIORIDAD'){
-            note = ' (reservado – coordinar)';
+        const esRestriccion = !!s.restringido || String(s.motivoRestriccion||'').toUpperCase()==='RESTRICCION';
+        if (ocupado){
+          if (!puede){
+            if (motivo === 'PUBLICO_EXTERNO'){
+              note = userLowerThanMax ? ' (reservado)' : ' (evento externo – coordinar)';
+            } else if (motivo === 'MISMA_PRIORIDAD' && prio > 0){
+              note = ' (reservado – coordinar)';
+            } else if (userLowerThanMax || prio > 0 || maxP!=null) {
+              note = ' (reservado)';
+            }
           } else {
-            note = ' (reservado)';
+            note = ' (ocupado – puedes reasignar)';
           }
         }
-        const esRestriccion = !!s.restringido || String(s.motivoRestriccion||'').toUpperCase()==='RESTRICCION';
-        if (esRestriccion){ note = ' (horario restringido)'; }
-        const disabledAttr = (!puede || esRestriccion) ? 'disabled' : '';
-        return `<option value="${s.inicio}" ${disabledAttr}>${s.inicio} - ${s.fin}${note}</option>`;
-      }));
+        if (esRestriccion){
+          note = ' (horario restringido)';
+        }
+        const label = `${s.inicio} - ${s.fin}${note}`;
+        const disableOption = esRestriccion || (!puede && (userLowerThanMax || prio <= 0));
+        const disabledAttr = disableOption ? 'disabled' : '';
+        return `<option value="${s.inicio}" ${disabledAttr}>${label}</option>`;
+      }).join('');
 
-      $('#a-hora').innerHTML = opts.join('');
+      $('#a-hora').innerHTML = first + opts;
+      $('#a-hora').value = '';
       applyAdminSalonMetaHints();
 
       // === Actualizar el tag "(máx N)" en el label
@@ -606,18 +647,27 @@ function refreshSlotsAdmin(){
 function verifySelectedSlotAdmin(){
   const salon=$('#a-salon').value||''; const fecha=$('#a-fecha').value||''; const dur=Number($('#a-dur').value||0); const ini=$('#a-hora').value||'';
   if(!salon||!fecha||!dur||!ini) return;
+  const slotInfo = (__SLOT_INFO_ADMIN__||{})[ini];
+  if (showBlockedSlotMessageAdmin(slotInfo)){
+    $('#a-hora').value='';
+    return;
+  }
+  if (getEffectivePriorityForSalonAdmin(salon) > 0) return;
   Busy.show('Confirmando intervalo…');
   google.script.run
     .withSuccessHandler(r=>{
       Busy.hide();
       if(!r||!r.ok) return;
-      if(!r.disponible && !(2 > (r.maxPrio||0))){
+      if(!r.disponible){
         const motivo = String(r.motivo||'').toUpperCase();
         if (motivo === 'RESTRICCION'){
           modal('Este salón no permite reservas en el horario seleccionado. Elige otro intervalo.');
         } else {
           modal('Ese intervalo ya no está disponible.');
         }
+        const sel = $('#a-hora');
+        const opt = sel && sel.querySelector ? sel.querySelector(`option[value="${ini}"]`) : null;
+        if (opt) opt.disabled = true;
         $('#a-hora').value='';
         scheduleRefreshSlotsAdmin();
       }
@@ -646,6 +696,38 @@ function crearReservaAdmin(){
     const hint = document.getElementById('a-emailError'); if (hint) hint.hidden = false;
     return modal('El correo del anfitrión debe ser del dominio @infotep.gob.do');
   }
+  const slotInfo = (__SLOT_INFO_ADMIN__||{})[p.hora_inicio];
+  if (showBlockedSlotMessageAdmin(slotInfo)){
+    $('#a-hora').value='';
+    return;
+  }
+  const prioSalon = getEffectivePriorityForSalonAdmin(p.salon_id);
+  if (prioSalon <= 0){
+    Busy.show('Verificando disponibilidad…');
+    google.script.run
+      .withSuccessHandler(r=>{
+        Busy.hide();
+        if (!r || r.ok !== true){
+          return modal('No se pudo confirmar la disponibilidad.');
+        }
+        if (!r.disponible){
+          modal('Ese intervalo ya está reservado. Por favor elige otro.');
+          const sel = $('#a-hora');
+          const opt = sel && sel.querySelector ? sel.querySelector(`option[value="${p.hora_inicio}"]`) : null;
+          if (opt) opt.disabled = true;
+          sel.value = '';
+          scheduleRefreshSlotsAdmin();
+          return;
+        }
+        crearReservaAdminSubmit(p);
+      })
+      .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo confirmar la disponibilidad.'); });
+    return;
+  }
+  crearReservaAdminSubmit(p);
+}
+
+function crearReservaAdminSubmit(payload){
   Busy.show('Creando reserva…');
   google.script.run
     .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){
@@ -662,7 +744,7 @@ function crearReservaAdmin(){
       applyAdminSalonMetaHints();
     } else { modal((r&&r.msg)||'No se pudo crear'); } })
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
-    .apiCrearReserva(p);
+    .apiCrearReserva(payload);
 }
 function getDurationConfigForSalonAdmin(salonId){
   const cfg = (__SALON_CFG_MAP__||{})[salonId];
@@ -689,6 +771,62 @@ function renderDurationsFromConfigAdmin(){
   }
   sel.innerHTML = opts.join('');
   sel.value = '';
+}
+
+function showBlockedSlotMessageAdmin(slotInfo){
+  if (!slotInfo) return false;
+
+  if (slotInfo.restringido || String(slotInfo.motivoRestriccion||'').toUpperCase()==='RESTRICCION'){
+    modal('Este horario está restringido para este salón. Selecciona otro intervalo.');
+    return true;
+  }
+
+  const currentSalonEl = $('#a-salon');
+  const currentSalonId = currentSalonEl ? (currentSalonEl.value || '') : '';
+  const userPrio = getEffectivePriorityForSalonAdmin(currentSalonId);
+  const ocupantes = Array.isArray(slotInfo.ocupantes) ? slotInfo.ocupantes : [];
+  const motivo = String(slotInfo.motivoConciliacion || '').toUpperCase();
+  const hayEventoExterno = (motivo === 'PUBLICO_EXTERNO') || ocupantes.some(o => isPublicoExternoOMixto(o.publico_tipo));
+  const hayMismaPrioridad = (motivo === 'MISMA_PRIORIDAD') || ocupantes.some(o => Number(o.prioridad || 0) === userPrio);
+  const rawMaxPrio = (slotInfo.maxPrio == null || slotInfo.maxPrio === '') ? null : Number(slotInfo.maxPrio);
+  const maxPrio = (Number.isFinite ? Number.isFinite(rawMaxPrio) : isFinite(rawMaxPrio)) ? rawMaxPrio : null;
+  const usuarioTieneMenorPrioridad = maxPrio !== null && userPrio < maxPrio;
+
+  if ((!hayEventoExterno && !hayMismaPrioridad) || (usuarioTieneMenorPrioridad && !hayMismaPrioridad)) {
+    return false;
+  }
+
+  const items = ocupantes.map(o => {
+    const nombre = escHtml(o.nombre || o.email || 'Reservante');
+    const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+    const evento = o.evento ? `<div class="muted">Evento: ${escHtml(o.evento)}</div>` : '';
+    const publico = o.publico_tipo ? `<div class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</div>` : '';
+    const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
+    const prioridad = escHtml(String(o.prioridad || 0));
+    return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+  }).join('');
+
+  const listaHtml = items ? `<ul style="padding-left:18px;margin:8px 0;">${items}</ul>` : '';
+
+  if (hayEventoExterno){
+    const html = `
+      <p>Este horario ya está reservado para un evento con público externo o mixto.</p>
+      ${listaHtml}
+      <p>Debes coordinar con la(s) persona(s) anfitriona(s) para que cancelen la reserva antes de agendar este horario.</p>
+    `;
+    modal(html, 'Horario reservado', { html: true });
+    return true;
+  }
+
+  if (userPrio <= 0) return false;
+
+  const html = `
+    <p>Este horario ya está reservado por otra persona con la misma prioridad.</p>
+    ${listaHtml}
+    <p>Debes coordinar con la otra parte para que cancele su reserva y puedas agendar este horario.</p>
+  `;
+  modal(html, 'Horario reservado', { html: true });
+  return true;
 }
 
 // ===== Capacidad (Admin) =====
