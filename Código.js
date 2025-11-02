@@ -1818,8 +1818,16 @@ function adminPanelUrl_(){
 
 function normalizeExecUrl_(url){
   let base = String(url||'');
-  if (!/\/exec(\?|$)/.test(base)) base = base.replace(/\/(dev|user|exec)?(\?.*)?$/, '')+'/exec';
-  if (!/[?&]authuser=/.test(base)) base += (base.indexOf('?')===-1?'?':'&')+'authuser=1';
+  if (!/\/exec(\?|$)/.test(base)){
+    base = base.replace(/\/(dev|user|exec)?(\?.*)?$/, '') + '/exec';
+  }
+  if (/[?&]authuser=/.test(base)){
+    return base;
+  }
+  const authUserCfg = String(cfg_('DEFAULT_AUTHUSER_INDEX') || '').trim();
+  if (authUserCfg && /^\d+$/.test(authUserCfg)){
+    base += (base.indexOf('?')===-1 ? '?' : '&') + 'authuser=' + authUserCfg;
+  }
   return base;
 }
 
