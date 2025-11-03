@@ -213,7 +213,13 @@ function setDefaultAdminRange(days=30, opts={}){
 
 function drawSalones(arr){
   const el = $('#salones');
-  if (!arr.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
+  if (!el) return;
+  if (!arr.length){
+    el.classList.add('is-empty');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('is-empty');
   const rows = arr.map(s=>{
     const meta = parseSalonRestrictionMeta(s.restriccion);
     const parts = [];
@@ -223,15 +229,15 @@ function drawSalones(arr){
     const conserjeTxt = String(s.requiere_conserje||'SI').toUpperCase()==='SI' ? 'Sí' : 'No';
     const adminTxt = String(s.administracion_id||'1');
     return `<tr>
-      <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
-      <td>${restr}</td>
-      <td>${conserjeTxt}</td>
-      <td>${adminTxt}</td>
-      <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
-      <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
+      <td data-th="ID">${s.id}</td><td data-th="Salón">${s.nombre}</td><td data-th="Capacidad">${s.capacidad}</td>
+      <td data-th="Restricción">${restr}</td>
+      <td data-th="Conserje">${conserjeTxt}</td>
+      <td data-th="Admin">${adminTxt}</td>
+      <td data-th="Estado">${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
+      <td data-th="Acción"><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<table class="table-center salones-table"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th>Acción</th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
 }
 
@@ -1006,6 +1012,7 @@ function renderDurationsFromConfigAdmin(){
   if (!sel) return;
   const salonId = ($('#a-salon') && $('#a-salon').value) || '';
   const cfg = getDurationConfigForSalonAdmin(salonId);
+  const prevValue = sel.value || '';
   const min = Math.max(1, Number(cfg.min || DEFAULT_DUR_CFG.min));
   const max = Math.max(min, Number(cfg.max || min));
   const step = Math.max(1, Number(cfg.step || DEFAULT_DUR_CFG.step));
@@ -1015,7 +1022,11 @@ function renderDurationsFromConfigAdmin(){
     opts.push(`<option value="${d}">${label}</option>`);
   }
   sel.innerHTML = opts.join('');
-  sel.value = '';
+  if (prevValue && Array.from(sel.options || []).some(opt => opt.value === prevValue)){
+    sel.value = prevValue;
+  } else {
+    sel.value = '';
+  }
 }
 
 function showBlockedSlotMessageAdmin(slotInfo){
@@ -1148,22 +1159,129 @@ function openUsuariosModal(){
   if (!IS_GENERAL_ADMIN) return;
   const modal = document.getElementById('modalUsers');
   const listEl = document.getElementById('users-list');
+  const prioHidden = document.getElementById('u-prio-salones');
+  const prioListEl = document.getElementById('u-prio-salones-list');
+  const prioPicker = document.getElementById('u-prio-salones-picker');
+  const prioAddBtn = document.getElementById('u-prio-salones-add');
   let selected = null; // objeto usuario seleccionado
+  const salonDataset = Array.isArray(__SALONES_ALL__) && __SALONES_ALL__.length
+    ? __SALONES_ALL__
+    : (Array.isArray(__SALONES_MANAGE__) ? __SALONES_MANAGE__ : []);
+  const salonMap = {};
+  salonDataset.forEach(s => {
+    const id = String(s && s.id || '').trim();
+    if (!id) return;
+    salonMap[id.toUpperCase()] = { id, nombre: s.nombre || id };
+  });
+
+  const getPriorityCodes = ()=>{
+    if (!prioHidden) return [];
+    const raw = String(prioHidden.value || '').trim();
+    if (!raw) return [];
+    return raw.split(';')
+      .map(code => String(code || '').trim().toUpperCase())
+      .filter((code, idx, arr) => code && arr.indexOf(code) === idx);
+  };
+  const syncPriorityCodes = codes => {
+    const norm = Array.isArray(codes) ? codes.map(c => String(c || '').trim().toUpperCase()).filter(Boolean) : [];
+    const unique = [];
+    const seen = {};
+    norm.forEach(code => {
+      if (!seen[code]){
+        seen[code] = true;
+        unique.push(code);
+      }
+    });
+    if (prioHidden){
+      prioHidden.value = unique.join(';');
+    }
+    if (prioListEl){
+      if (!unique.length){
+        prioListEl.innerHTML = '';
+        prioListEl.dataset.empty = 'true';
+      } else {
+        prioListEl.dataset.empty = 'false';
+        prioListEl.innerHTML = unique.map(code => {
+          const salon = salonMap[code] || {};
+          const label = escHtml(`${salon.nombre || code} (${code})`);
+          return `<span class="chip" data-code="${code}">${label}<button class="chip-remove" type="button" data-remove-code="${code}" aria-label="Quitar ${label}">×</button></span>`;
+        }).join('');
+      }
+    }
+  };
+  const populatePriorityPicker = ()=>{
+    if (!prioPicker) return;
+    const opts = ['<option value="">[Seleccionar salón]</option>'];
+    const dataset = salonDataset.slice().sort((a,b)=>{
+      const an = String(a && a.nombre || '').toLocaleLowerCase('es');
+      const bn = String(b && b.nombre || '').toLocaleLowerCase('es');
+      if (an === bn) return String(a && a.id || '').localeCompare(String(b && b.id || ''));
+      return an.localeCompare(bn);
+    });
+    dataset.forEach(s => {
+      const id = String(s && s.id || '').trim();
+      if (!id) return;
+      const name = s && s.nombre ? s.nombre : id;
+      opts.push(`<option value="${id}">${escHtml(name)} (${escHtml(id)})</option>`);
+    });
+    prioPicker.innerHTML = opts.join('');
+  };
+  const addPrioritySalon = code => {
+    const list = getPriorityCodes();
+    list.push(String(code || '').trim().toUpperCase());
+    syncPriorityCodes(list);
+  };
+  const removePrioritySalon = code => {
+    const target = String(code || '').trim().toUpperCase();
+    const list = getPriorityCodes().filter(item => item !== target);
+    syncPriorityCodes(list);
+  };
+
+  populatePriorityPicker();
+  syncPriorityCodes(getPriorityCodes());
+  if (prioAddBtn && prioPicker){
+    prioAddBtn.onclick = ()=>{
+      const code = String(prioPicker.value || '').trim();
+      if (!code) return;
+      addPrioritySalon(code);
+      prioPicker.value = '';
+      prioPicker.focus();
+    };
+    prioPicker.addEventListener('change', ()=>{
+      const code = String(prioPicker.value || '').trim();
+      if (!code) return;
+      addPrioritySalon(code);
+      prioPicker.value = '';
+    });
+  }
+  if (prioListEl){
+    prioListEl.addEventListener('click', ev => {
+      const btn = ev.target.closest('[data-remove-code]');
+      if (!btn) return;
+      removePrioritySalon(btn.getAttribute('data-remove-code'));
+    });
+  }
   const draw = (items=[])=>{
-    if (!items.length){ listEl.innerHTML = '<p style="padding:10px">No hay usuarios.</p>'; return; }
+    if (!listEl) return;
+    if (!items.length){
+      listEl.classList.add('is-empty');
+      listEl.innerHTML = '';
+      return;
+    }
     const rows = items.map(u=>`
       <tr class="u-row" data-email="${u.email}">
-        <td>${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
-        <td>${u.departamento||''}</td>
-        <td><span class="tag">${u.rol||''}</span></td>
-        <td>${Number(u.prioridad||0)}</td>
-        <td>${u.prioridad_salones||''}</td>
-        <td>${u.estado||''}</td>
-        <td>${u.extension||''}</td>
-        <td>${u.administracion_id||'1'}</td>
+        <td data-th="Nombre / Correo">${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
+        <td data-th="Departamento">${u.departamento||''}</td>
+        <td data-th="Rol"><span class="tag">${u.rol||''}</span></td>
+        <td data-th="Prioridad">${Number(u.prioridad||0)}</td>
+        <td data-th="Salones con prioridad">${u.prioridad_salones||''}</td>
+        <td data-th="Estado">${u.estado||''}</td>
+        <td data-th="Ext.">${u.extension||''}</td>
+        <td data-th="Admin">${u.administracion_id||'1'}</td>
       </tr>
     `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
+    listEl.classList.remove('is-empty');
+    listEl.innerHTML = `<table class="user-table"><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -1183,20 +1301,27 @@ function openUsuariosModal(){
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
-    ['u-email','u-nombre','u-dep','u-prio','u-prio-salones','u-ext','u-admin'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    ['u-email','u-nombre','u-dep','u-prio','u-ext'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    const adminInput = document.getElementById('u-admin'); if (adminInput) adminInput.value = '1';
     const r = document.getElementById('u-rol'); if(r) r.value='';
     const e = document.getElementById('u-estado'); if(e) e.value='';
+    syncPriorityCodes([]);
+    if (prioPicker) prioPicker.value = '';
   };
   const fillUserForm = (u)=>{
     document.getElementById('u-email').value = u?.email||'';
     document.getElementById('u-nombre').value = u?.nombre||'';
     document.getElementById('u-dep').value = u?.departamento||'';
     document.getElementById('u-rol').value = u?.rol||'';
-    document.getElementById('u-prio').value = Number(u?.prioridad||0);
-    document.getElementById('u-prio-salones').value = u?.prioridad_salones||'';
+    document.getElementById('u-prio').value = String(Number(u?.prioridad||0));
     document.getElementById('u-estado').value = u?.estado||'';
     document.getElementById('u-ext').value = u?.extension||'';
     document.getElementById('u-admin').value = u?.administracion_id || '';
+    const codes = Array.isArray(u?.prioridad_salones_list)
+      ? u.prioridad_salones_list
+      : String(u?.prioridad_salones||'').split(';');
+    syncPriorityCodes(codes);
+    if (prioPicker) prioPicker.value = '';
   };
   const load = ()=>{
     Busy.show('Cargando usuarios…');
@@ -1206,18 +1331,28 @@ function openUsuariosModal(){
       .apiListUsuarios();
   };
   document.getElementById('u-save').onclick = ()=>{
+    const prioridadRaw = document.getElementById('u-prio').value;
+    const prioridadNum = prioridadRaw === '' ? NaN : Number(prioridadRaw);
     const payload = {
       email:    document.getElementById('u-email').value.trim(),
       nombre:   document.getElementById('u-nombre').value.trim(),
       departamento: document.getElementById('u-dep').value.trim(),
       rol:      document.getElementById('u-rol').value.trim(),
-      prioridad:Number(document.getElementById('u-prio').value||0),
-      prioridad_salones: document.getElementById('u-prio-salones').value.trim(),
+      prioridad:isNaN(prioridadNum) ? null : prioridadNum,
+      prioridad_salones: '',
       estado:   document.getElementById('u-estado').value.trim(),
       extension:document.getElementById('u-ext').value.trim(),
-      administracion_id: (document.getElementById('u-admin').value || '1').trim()
+      administracion_id: (document.getElementById('u-admin').value || '').trim()
     };
-    if (!payload.email) return modalMsg('Correo es obligatorio.');
+    if (!payload.email) return modalMsg('El correo es obligatorio.');
+    if (!payload.nombre) return modalMsg('El nombre es obligatorio.');
+    if (!payload.departamento) return modalMsg('El departamento es obligatorio.');
+    if (!payload.rol) return modalMsg('Selecciona un rol.');
+    if (payload.prioridad === null) return modalMsg('La prioridad es obligatoria.');
+    const codes = getPriorityCodes();
+    payload.prioridad_salones = codes.join(';');
+    if (!payload.estado) return modalMsg('Selecciona un estado.');
+    if (!payload.extension) return modalMsg('La extensión es obligatoria.');
     // Si hay selección y no hay cambios → no-op
     if (selected &&
         selected.email===payload.email &&

@@ -20,14 +20,14 @@
         <button id="btnUsuarios"  class="btn btn-blue btn--sm" type="button" title="Gestionar usuarios" aria-label="Gestionar usuarios">Usuarios</button>
       </div>
     </div>
-    <div id="salones"></div>
+    <div id="salones" class="table-overflow table-overflow--salones" data-empty-text="No hay salones configurados."></div>
   </section>
 
   <!-- Modal Conserjes -->
   <div id="modalCon" class="overlay" hidden>
-    <div class="modal-card" style="max-width:840px; text-align:left;">
+    <div class="modal-card modal-card--md">
       <h3>Conserjes</h3>
-      <div id="con-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
+      <div id="con-list" class="modal-scroll"></div>
       <div class="row g" style="margin-top:6px">
         <input id="con-nombre" placeholder="Nombre"/>
         <input id="con-email" placeholder="Correo"/>
@@ -41,30 +41,76 @@
 
   <!-- Modal Usuarios -->
   <div id="modalUsers" class="overlay" hidden>
-    <div class="modal-card" style="max-width:900px; text-align:left;">
-      <h3>Usuarios</h3>
-      <div id="users-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
-      <div class="row g" style="margin-top:8px">
-        <input id="u-email" placeholder="Correo (obligatorio)"/>
-        <input id="u-nombre" placeholder="Nombre"/>
-        <input id="u-dep" placeholder="Departamento"/>
-        <select id="u-rol">
-          <option value="">[Rol]</option>
-          <option value="ADMIN">ADMIN</option>
-          <option value="SOLICITANTE">SOLICITANTE</option>
-        </select>
-        <input id="u-prio" type="number" min="0" placeholder="Prioridad"/>
-        <input id="u-prio-salones" placeholder="Salones prioridad (S0001;S0002)"/>
-        <select id="u-estado">
-          <option value="">[Estado]</option>
-          <option value="ACTIVO">ACTIVO</option>
-          <option value="PENDIENTE">PENDIENTE</option>
-          <option value="INACTIVO">INACTIVO</option>
-        </select>
-        <input id="u-ext" placeholder="Extensión"/>
-        <input id="u-admin" type="number" min="1" placeholder="Administración"/>
+    <div class="modal-card modal-card--lg">
+      <div class="modal-head">
+        <h3>Usuarios</h3>
       </div>
-      <div class="row g" style="margin-top:8px">
+      <div class="modal-body">
+        <div id="users-list" class="table-overflow table-overflow--flat is-empty" data-empty-text="No hay usuarios registrados."></div>
+        <small class="muted">Los campos marcados con <span class="required">*</span> son obligatorios.</small>
+        <div class="user-form-grid">
+          <div class="user-field">
+            <label for="u-email">Correo <span class="required">*</span></label>
+            <input id="u-email" type="email" placeholder="usuario@infotep.gob.do" required />
+          </div>
+          <div class="user-field">
+            <label for="u-nombre">Nombre <span class="required">*</span></label>
+            <input id="u-nombre" placeholder="Nombre completo" required />
+          </div>
+          <div class="user-field">
+            <label for="u-dep">Departamento <span class="required">*</span></label>
+            <input id="u-dep" placeholder="Departamento" required />
+          </div>
+          <div class="user-field">
+            <label for="u-rol">Rol <span class="required">*</span></label>
+            <select id="u-rol" required>
+              <option value="">[Rol]</option>
+              <option value="ADMIN">ADMIN</option>
+              <option value="SOLICITANTE">SOLICITANTE</option>
+            </select>
+          </div>
+          <div class="user-field">
+            <label for="u-prio">Prioridad <span class="required">*</span></label>
+            <input id="u-prio" type="number" min="0" placeholder="Ej: 0" required />
+          </div>
+          <div class="user-field">
+            <label for="u-estado">Estado <span class="required">*</span></label>
+            <select id="u-estado" required>
+              <option value="">[Estado]</option>
+              <option value="ACTIVO">ACTIVO</option>
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="INACTIVO">INACTIVO</option>
+            </select>
+          </div>
+          <div class="user-field">
+            <label for="u-ext">Extensión <span class="required">*</span></label>
+            <input id="u-ext" placeholder="Ej: 2239" required />
+          </div>
+          <div class="user-field">
+            <label for="u-admin">Administración</label>
+            <input id="u-admin" type="number" min="1" placeholder="Ej: 1" />
+          </div>
+        </div>
+        <div class="user-priority-block">
+          <div class="user-priority-title-row">
+            <span class="user-priority-title">Salones con prioridad</span>
+            <span class="user-priority-optional">Opcional</span>
+          </div>
+          <div id="u-prio-salones-list" class="chip-list" data-empty-text="Sin salones priorizados (opcional)"></div>
+          <div class="user-priority-controls">
+            <label class="sr-only" for="u-prio-salones-picker">Seleccionar salón con prioridad</label>
+            <div class="chip-actions">
+              <select id="u-prio-salones-picker">
+                <option value="">[Seleccionar salón]</option>
+              </select>
+              <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
+            </div>
+          </div>
+          <small id="u-prio-salones-hint" class="muted">Déjalo vacío si la prioridad aplica para todos los salones.</small>
+          <input id="u-prio-salones" type="hidden" />
+        </div>
+      </div>
+      <div class="modal-footer">
         <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
         <button id="u-close" class="btn btn-blue btn--sm" type="button">Cerrar</button>
       </div>
@@ -93,14 +139,14 @@
         <input id="a-fecha" type="date" />
       </div>
       <div class="form-item">
-        <label for="a-dur">Duración</label>
-        <select id="a-dur"></select>
-      </div>
-      <div class="form-item">
         <label for="a-salon">Salón</label>
         <select id="a-salon"></select>
         <div id="a-restriccionHint" class="notice notice--warning" hidden></div>
         <div id="a-aprobacionHint" class="notice notice--info" hidden></div>
+      </div>
+      <div class="form-item">
+        <label for="a-dur">Duración</label>
+        <select id="a-dur"></select>
       </div>
       <div class="form-item">
         <label for="a-hora">Hora</label>
