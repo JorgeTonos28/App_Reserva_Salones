@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.7-2025-11-08';
+const APP_VERSION = 'salones-v10.8-2025-11-08';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -2297,11 +2297,22 @@ function apiUpsertUsuario(u){
   if (!isAdminEmail_(me) || !isGeneralAdminUser_(meUser)) return { ok:false, msg:'No autorizado' };
   if (!u || !u.email) return { ok:false, msg:'Email requerido' };
   const email = String(u.email).toLowerCase().trim();
+  if (!email) return { ok:false, msg:'Email requerido' };
   const nombre = String(u.nombre||'').trim();
   const dep = String(u.departamento||'').trim();
   const rol = String(u.rol||'').toUpperCase().trim();
-  const prio = Number(u.prioridad||0);
-  const adminId = normalizeAdminId_(u.administracion_id || u.admin_id || '1');
+  const tienePrioridadCampo = Object.prototype.hasOwnProperty.call(u||{}, 'prioridad');
+  const prioridadEntrada = tienePrioridadCampo ? u.prioridad : (u && u.prioridad);
+  const prioridadStr = (prioridadEntrada === null || prioridadEntrada === undefined) ? '' : String(prioridadEntrada);
+  const prio = Number(prioridadEntrada);
+  const adminIdRaw = String(u.administracion_id || u.admin_id || '').trim();
+  if (!nombre) return { ok:false, msg:'Nombre requerido' };
+  if (!dep) return { ok:false, msg:'Departamento requerido' };
+  if (!rol) return { ok:false, msg:'Rol requerido' };
+  if (rol !== 'ADMIN' && rol !== 'SOLICITANTE') return { ok:false, msg:'Rol inválido' };
+  if (!prioridadStr.trim() || isNaN(prio)) return { ok:false, msg:'Prioridad requerida' };
+  if (!adminIdRaw) return { ok:false, msg:'Administración requerida' };
+  const adminId = normalizeAdminId_(adminIdRaw);
   let prioSalonesInput = '';
   if (Array.isArray(u.prioridad_salones)){
     prioSalonesInput = u.prioridad_salones.join(';');
@@ -2313,21 +2324,118 @@ function apiUpsertUsuario(u){
     prioSalonesInput = u.prioridadSalones;
   }
   const prioSalonesList = parsePrioridadSalones_(prioSalonesInput);
+  if (!prioSalonesList.length) return { ok:false, msg:'Debe indicar al menos un salón con prioridad' };
   const prioSalonesRaw = prioSalonesList.join(';');
   const est = String(u.estado||'').toUpperCase().trim();
+  if (!est) return { ok:false, msg:'Estado requerido' };
+  if (['ACTIVO','PENDIENTE','INACTIVO'].indexOf(est) === -1) return { ok:false, msg:'Estado inválido' };
   const ext = String(u.extension||'').trim();
+  if (!ext) return { ok:false, msg:'Extensión requerida' };
   const lr = SH_USR.getLastRow();
+  let rowIndex = -1;
+  let prevEstado = '';
   if (lr>=2){
     const vals = SH_USR.getRange(2,1,lr-1,9).getValues();
     for (let i=0;i<vals.length;i++){
       if (String(vals[i][0]).toLowerCase().trim()===email){
-        SH_USR.getRange(i+2,2,1,8).setValues([[nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId]]);
-        return { ok:true, updated:true };
+        rowIndex = i+2;
+        prevEstado = String(vals[i][6]||'').toUpperCase().trim();
+        break;
       }
     }
   }
+  const rowValues = [nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId];
+  const userForMail = {
+    email, nombre, departamento: dep, rol, prioridad: prio,
+    prioridad_salones_list: prioSalonesList, estado: est,
+    administracion_id: adminId, extension: ext
+  };
+  if (rowIndex > 0){
+    SH_USR.getRange(rowIndex,2,1,8).setValues([rowValues]);
+    SpreadsheetApp.flush();
+    if (prevEstado === 'PENDIENTE' && est === 'ACTIVO'){
+      try{ notifyUsuarioActivado_(userForMail); }catch(e){}
+    }
+    return { ok:true, updated:true };
+  }
   SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId]);
+  SpreadsheetApp.flush();
+  try{ notifyUsuarioCreado_(userForMail); }catch(e){}
   return { ok:true, created:true };
+}
+
+function formatPrioritySalonListText_(codes){
+  const list = Array.isArray(codes) ? codes.map(code => String(code||'').trim()).filter(Boolean) : [];
+  if (!list.length) return 'Todos los salones';
+  return list.join(', ');
+}
+
+function notifyUsuarioCreado_(user){
+  if (!user || !user.email) return;
+  const adminId = normalizeAdminId_(user.administracion_id || '1');
+  const brand = mailCfg_(adminId);
+  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
+  const appUrl = normalizeExecUrl_(base);
+  const salonesTxt = formatPrioritySalonListText_(user.prioridad_salones_list);
+  const html = emailLayout_({
+    adminId,
+    title: 'Usuario creado en Reserva de Salones',
+    preheader: 'Tu acceso fue registrado por la administración.',
+    htmlInner:
+      emailParagraph_(`Hola <b>${escapeHtml_(user.nombre || user.email)}</b>,`) +
+      emailParagraph_('Un administrador creó tu usuario en la plataforma Reserva de Salones. Estos son tus datos principales:') +
+      emailDetailsRows_([
+        ['Correo', user.email],
+        ['Rol', user.rol],
+        ['Prioridad', String(user.prioridad)],
+        ['Salones con prioridad', salonesTxt],
+        ['Estado inicial', user.estado]
+      ]) +
+      emailParagraph_('Puedes ingresar con tu cuenta institucional para gestionar reservas y solicitudes cuando lo necesites.'),
+    ctaUrl: appUrl,
+    ctaLabel: 'Abrir Reserva de Salones',
+    footer: 'Este mensaje se envía automáticamente al crear tu usuario.'
+  });
+  MailApp.sendEmail({
+    to: user.email,
+    subject: 'Se creó tu usuario en Reserva de Salones',
+    htmlBody: html,
+    name: brand.brandName,
+    replyTo: brand.replyTo
+  });
+}
+
+function notifyUsuarioActivado_(user){
+  if (!user || !user.email) return;
+  const adminId = normalizeAdminId_(user.administracion_id || '1');
+  const brand = mailCfg_(adminId);
+  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
+  const appUrl = normalizeExecUrl_(base);
+  const salonesTxt = formatPrioritySalonListText_(user.prioridad_salones_list);
+  const html = emailLayout_({
+    adminId,
+    title: 'Tu usuario fue activado',
+    preheader: 'Ya puedes gestionar reservas en la plataforma.',
+    htmlInner:
+      emailParagraph_(`Hola <b>${escapeHtml_(user.nombre || user.email)}</b>,`) +
+      emailParagraph_('La administración activó tu usuario en Reserva de Salones. Ya puedes crear y administrar solicitudes.') +
+      emailDetailsRows_([
+        ['Rol', user.rol],
+        ['Prioridad', String(user.prioridad)],
+        ['Salones con prioridad', salonesTxt]
+      ]) +
+      emailParagraph_('Ingresa con tu cuenta institucional desde el enlace para comenzar a usar el sistema.'),
+    ctaUrl: appUrl,
+    ctaLabel: 'Ir a Reserva de Salones',
+    footer: 'Notificación automática de activación de usuario.'
+  });
+  MailApp.sendEmail({
+    to: user.email,
+    subject: 'Tu usuario en Reserva de Salones fue activado',
+    htmlBody: html,
+    name: brand.brandName,
+    replyTo: brand.replyTo
+  });
 }
 
 // ========= API conserjes =========

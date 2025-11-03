@@ -44,25 +44,62 @@
     <div class="modal-card" style="max-width:900px; text-align:left;">
       <h3>Usuarios</h3>
       <div id="users-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
-      <div class="row g" style="margin-top:8px">
-        <input id="u-email" placeholder="Correo (obligatorio)"/>
-        <input id="u-nombre" placeholder="Nombre"/>
-        <input id="u-dep" placeholder="Departamento"/>
-        <select id="u-rol">
-          <option value="">[Rol]</option>
-          <option value="ADMIN">ADMIN</option>
-          <option value="SOLICITANTE">SOLICITANTE</option>
-        </select>
-        <input id="u-prio" type="number" min="0" placeholder="Prioridad"/>
-        <input id="u-prio-salones" placeholder="Salones prioridad (S0001;S0002)"/>
-        <select id="u-estado">
-          <option value="">[Estado]</option>
-          <option value="ACTIVO">ACTIVO</option>
-          <option value="PENDIENTE">PENDIENTE</option>
-          <option value="INACTIVO">INACTIVO</option>
-        </select>
-        <input id="u-ext" placeholder="Extensión"/>
-        <input id="u-admin" type="number" min="1" placeholder="Administración"/>
+      <small class="muted">Todos los campos son obligatorios.</small>
+      <div class="row g user-form-grid" style="margin-top:8px">
+        <div class="user-field">
+          <label for="u-email">Correo</label>
+          <input id="u-email" type="email" placeholder="usuario@infotep.gob.do" required />
+        </div>
+        <div class="user-field">
+          <label for="u-nombre">Nombre</label>
+          <input id="u-nombre" placeholder="Nombre completo" required />
+        </div>
+        <div class="user-field">
+          <label for="u-dep">Departamento</label>
+          <input id="u-dep" placeholder="Departamento" required />
+        </div>
+        <div class="user-field">
+          <label for="u-rol">Rol</label>
+          <select id="u-rol" required>
+            <option value="">[Rol]</option>
+            <option value="ADMIN">ADMIN</option>
+            <option value="SOLICITANTE">SOLICITANTE</option>
+          </select>
+        </div>
+        <div class="user-field">
+          <label for="u-prio">Prioridad</label>
+          <input id="u-prio" type="number" min="0" placeholder="Ej: 0" required />
+        </div>
+        <div class="user-field user-field--full">
+          <label for="u-prio-salones-picker">Salones con prioridad</label>
+          <div id="u-prio-salones-list" class="chip-list" data-empty-text="No hay salones seleccionados."></div>
+          <div class="chip-actions">
+            <select id="u-prio-salones-picker">
+              <option value="">[Seleccionar salón]</option>
+            </select>
+            <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
+          </div>
+          <small id="u-prio-salones-hint" class="muted">Selecciona los salones para los que aplica la prioridad.</small>
+          <small id="u-prio-salones-error" class="error" hidden>Debes seleccionar al menos un salón.</small>
+          <input id="u-prio-salones" type="hidden" />
+        </div>
+        <div class="user-field">
+          <label for="u-estado">Estado</label>
+          <select id="u-estado" required>
+            <option value="">[Estado]</option>
+            <option value="ACTIVO">ACTIVO</option>
+            <option value="PENDIENTE">PENDIENTE</option>
+            <option value="INACTIVO">INACTIVO</option>
+          </select>
+        </div>
+        <div class="user-field">
+          <label for="u-ext">Extensión</label>
+          <input id="u-ext" placeholder="Ej: 2239" required />
+        </div>
+        <div class="user-field">
+          <label for="u-admin">Administración</label>
+          <input id="u-admin" type="number" min="1" placeholder="Ej: 1" required />
+        </div>
       </div>
       <div class="row g" style="margin-top:8px">
         <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
@@ -93,14 +130,14 @@
         <input id="a-fecha" type="date" />
       </div>
       <div class="form-item">
-        <label for="a-dur">Duración</label>
-        <select id="a-dur"></select>
-      </div>
-      <div class="form-item">
         <label for="a-salon">Salón</label>
         <select id="a-salon"></select>
         <div id="a-restriccionHint" class="notice notice--warning" hidden></div>
         <div id="a-aprobacionHint" class="notice notice--info" hidden></div>
+      </div>
+      <div class="form-item">
+        <label for="a-dur">Duración</label>
+        <select id="a-dur"></select>
       </div>
       <div class="form-item">
         <label for="a-hora">Hora</label>

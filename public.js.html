@@ -1005,6 +1005,7 @@ function renderDurationsFromConfig(){
   if (!sel) return;
   const salonId = ($('#selSalon') && $('#selSalon').value) || '';
   const cfg = getDurationConfigForSalon(salonId);
+  const prevValue = sel.value || '';
   const min = Math.max(1, Number(cfg.min || DEFAULT_DUR_CFG_PUBLIC.min));
   const max = Math.max(min, Number(cfg.max || min));
   const step = Math.max(1, Number(cfg.step || DEFAULT_DUR_CFG_PUBLIC.step));
@@ -1014,7 +1015,11 @@ function renderDurationsFromConfig(){
     opts.push(`<option value="${d}">${label}</option>`);
   }
   sel.innerHTML = opts.join('');
-  sel.value = '';
+  if (prevValue && Array.from(sel.options || []).some(opt => opt.value === prevValue)){
+    sel.value = prevValue;
+  } else {
+    sel.value = '';
+  }
 }
 function humanizeMinutes(mins){
   if (mins < 60) return `${mins} minutos`;

@@ -20,6 +20,19 @@
   .row.g{ gap:10px; align-items:center; }
   .g > *{ flex:1 1 240px; min-width:220px; }
 
+  .user-form-grid{ align-items:flex-start; }
+  .user-field{ display:flex; flex-direction:column; gap:6px; flex:1 1 220px; min-width:210px; }
+  .user-field label{ font-size:13px; color:#4b5563; font-weight:500; }
+  .user-field--full{ flex:1 1 100%; }
+  .chip-list{ display:flex; flex-wrap:wrap; gap:6px; padding:6px 0; min-height:38px; align-items:center; }
+  .chip-list[data-empty="true"]::before{ content:attr(data-empty-text); color:#6b7280; font-size:12px; }
+  .chip{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:999px; font-size:13px; color:#1e40af; }
+  .chip-remove{ background:none; border:none; color:#1f2937; cursor:pointer; font-size:14px; line-height:1; padding:0; }
+  .chip-remove:hover{ color:#dc2626; }
+  .chip-actions{ display:flex; gap:8px; align-items:center; margin-top:4px; }
+  .chip-actions select{ flex:1 1 auto; }
+  .chip-actions .btn{ flex:0 0 auto; }
+
   .filters-row{ display:flex; flex-wrap:wrap; gap:10px; }
   .filters-row .filter-box{ flex:1 1 220px; min-width:190px; display:flex; flex-direction:column; }
   .filters-row .filter-box label{ font-size:12px; color:#4b5563; margin:0 0 6px; font-weight:500; }
