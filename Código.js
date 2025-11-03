@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.10-2025-11-10';
+const APP_VERSION = 'salones-v10.11-2025-11-10';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -170,6 +170,8 @@ function cfg_(key){
 
 const ADMIN_ALT_CFG_KEYS = Object.freeze({
   ADMIN_EMAILS:true,
+  CONSERJERIA_EMAILS:true,
+  CONSERJES_EMAILS:true,
   HORARIO_INICIO:true,
   HORARIO_FIN:true,
   DURATION_MIN:true,
@@ -801,11 +803,12 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
         var pr  = Number(r[15]||0);
         var email = String(r[9]||'');
         var nombre = String(r[10]||'');
+        var extension = String(r[12]||'');
         var evento = String(r[13]||'');
         var publico = String(r[14]||'');
         var adminReserva = normalizeAdminId_(r[23]||adminId);
         if (ini && fin){
-          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico, estado: estado, administracion_id: adminReserva });
+          ocupados.push({ ini: ini, fin: fin, prio: pr, email: email, nombre: nombre, evento: evento, publico: publico, estado: estado, administracion_id: adminReserva, extension: extension });
         }
       }
     }
@@ -872,7 +875,8 @@ function apiListDisponibilidad(fechaStr, salonId, duracionMin, userPrio){
             inicio: c.ini,
             fin: c.fin,
             estado: c.estado || '',
-            administracion_id: normalizeAdminId_(c.administracion_id || adminId)
+            administracion_id: normalizeAdminId_(c.administracion_id || adminId),
+            extension: c.extension || ''
           };
         })
       };
@@ -1171,6 +1175,7 @@ function getConflicts_(fecha, salonId, ini, fin, estados){
       solicitante: String(r[9]||''),
       solicitante_email: String(r[9]||''),
       solicitante_nombre: String(r[10]||''),
+      extension: String(r[12]||''),
       evento: String(r[13]||''),
       publico_tipo: String(r[14]||''),
       inicio: hhmmFromCell_(r[4]),
@@ -1609,6 +1614,52 @@ function sendEmailCancelacion_(reservaId){
     name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'Reserva de Salones',
     replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
   });
+
+  try { notifyConserjeCancelacion_(r); } catch(e){}
+}
+
+function notifyConserjeCancelacion_(reserva){
+  if (!reserva) return;
+  if (String(reserva.conserje_requerido||'').toUpperCase() !== 'SI') return;
+  const code = String(reserva.conserje_codigo_asignado || '').trim();
+  if (!code || code === CON_UNASSIGNED_CODE) return;
+
+  const cmap = conserjeMap_();
+  const conserje = cmap[code];
+  if (!conserje || !conserje.email) return;
+
+  const adminId = normalizeAdminId_(reserva.administracion_id || '1');
+  const rawMotivo = String(reserva.cancelado_motivo || 'No especificado');
+  const softMotivo = /reasignada\s+por\s+usuario\s+con\s+prioridad/i.test(rawMotivo)
+    ? 'Disponibilidad prioritaria en ese horario.'
+    : rawMotivo;
+
+  const html = emailLayout_({
+    title: 'Reserva cancelada',
+    preheader: `Se canceló tu asignación en ${escapeHtml_(reserva.salon_nombre||'')}.`,
+    htmlInner:
+      emailParagraph_(`Hola <b>${escapeHtml_(conserje.nombre || '')}</b>,`) +
+      emailParagraph_('La reserva a la que estabas asignado(a) fue cancelada. Estos son los detalles actualizados:') +
+      emailDetailsRows_([
+        ['Salón', reserva.salon_nombre || ''],
+        ['Fecha', fmtDMY_(reserva.fecha)],
+        ['Hora', `${fmt12_(reserva.hora_inicio)} – ${fmt12_(reserva.hora_fin)}`],
+        ['Evento', reserva.evento_nombre || ''],
+        ['Motivo de cancelación', softMotivo]
+      ]) +
+      emailParagraph_('No es necesario que asistas en ese horario. Si recibes una nueva asignación, te llegará otro correo.'),
+    footer: 'Gracias por tu apoyo logístico.',
+    adminId
+  });
+
+  const subject = `Reserva cancelada – ${reserva.salon_nombre} – ${fmtDMY_(reserva.fecha)} ${fmt12_(reserva.hora_inicio)}`;
+  MailApp.sendEmail({
+    to: conserje.email,
+    subject,
+    htmlBody: html,
+    name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
+    replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+  });
 }
 
 function sendEmailPendiente_(reservaId){
@@ -1969,106 +2020,131 @@ function escapeHtml_(s){
 }
 
 // ========= Tareas programadas =========
-function recipientsJoin_(){
-  // Admins + Conserjería (ambos desde Config), separados por ';'
-  const A = (cfg_('ADMIN_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean);
-  const C = (cfg_('CONSERJERIA_EMAILS')||cfg_('CONSERJES_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean);
-  // Evita duplicados
-  const set = {}; [...A, ...C].forEach(x=>{ if(x) set[x.toLowerCase()]=x; });
+function recipientsJoin_(adminId){
+  const scope = normalizeAdminId_(adminId || '1');
+  const adminList = (cfgForAdmin_(scope, 'ADMIN_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean);
+  const conserjeList = (
+    cfgForAdmin_(scope, 'CONSERJERIA_EMAILS')
+    || cfgForAdmin_(scope, 'CONSERJES_EMAILS')
+    || ''
+  ).split(';').map(s=>s.trim()).filter(Boolean);
+  const set = {};
+  [...adminList, ...conserjeList].forEach(x => {
+    if (!x) return;
+    set[x.toLowerCase()] = x;
+  });
   return Object.values(set).join(',');
 }
 
 function job_Diario_5AM_ActividadesDeHoy(){
-  const today = ymd_(new Date());               // YYYY-MM-DD
+  const today = ymd_(new Date());
   const lr = SH_RES.getLastRow(); if (lr<2) return;
   const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
   const cmap = conserjeMap_();
   const hoy = rows
     .filter(r => String(r[2]).toUpperCase()==='APROBADA' && ymdCell_(r[3])===today)
     .map(r => toReservaObj_(r))
-    .map(x => ({ ...x, conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || '' }));
+    .map(x => ({
+      ...x,
+      administracion_id: normalizeAdminId_(x.administracion_id || '1'),
+      conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || ''
+    }));
   if (!hoy.length) return;
-
-  // Agrupación por salón para lectura rápida
-  const bySalon = {};
-  hoy.forEach(r => {
-    bySalon[r.salon_nombre] = bySalon[r.salon_nombre] || [];
-    bySalon[r.salon_nombre].push(r);
-  });
-  Object.keys(bySalon).forEach(k => bySalon[k].sort((a,b)=> toMin_(a.hora_inicio)-toMin_(b.hora_inicio)));
-
-  // Tabla rica
-  const rowsHtml = (list)=> list.map(r=>{
-    const host = `${escapeHtml_(r.solicitante_nombre||'')} (${escapeHtml_(r.solicitante_email||'')})`;
-    const con  = (r.conserje_requerido==='SI')
-                  ? (r.conserje_nombre? `Asignado: ${escapeHtml_(r.conserje_nombre)}` : 'Requerido')
-                  : 'N/A';
-    return `
-      <tr>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};white-space:nowrap">${fmt12_(r.hora_inicio)} – ${fmt12_(r.hora_fin)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};">${escapeHtml_(r.evento_nombre||'')}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};">${host}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border}; text-align:center">${String(r.cant_personas||0)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border}; text-align:center">${escapeHtml_(r.publico_tipo||'')}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};">${con}</td>
-      </tr>`;
-  }).join('');
-
-  let blocks = '';
-  Object.keys(bySalon).sort().forEach(salon=>{
-    blocks += `
-      <tr><td style="padding:12px 0 4px 0;">
-        <div style="font-weight:700;color:${mailCfg_().text};font-size:14px;">${escapeHtml_(salon)}</div>
-      </td></tr>
-      <tr><td>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate">
-          <tr style="background:#fafafa">
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600">Hora</td>
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600">Evento</td>
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600">Anfitrión</td>
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600;text-align:center">Asist.</td>
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600;text-align:center">Público</td>
-            <td style="padding:8px 10px;border-bottom:1px solid ${mailCfg_().border};font-weight:600">Conserje</td>
-          </tr>
-          ${rowsHtml(bySalon[salon])}
-        </table>
-      </td></tr>`;
-  });
 
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
   const ctaUrl = normalizeExecUrl_(base);
-  const title  = `Agenda de hoy · ${fmtDMY_(today)}`;
-  const pre    = 'Reservas aprobadas y datos logísticos para el día';
 
-  const html = emailLayout_({
-    title: title,
-    preheader: pre,
-    htmlInner:
-      emailParagraph_(`Resumen del día <b>${fmtDMY_(today)}</b>. A continuación, el detalle por salón.`) +
-      blocks,
-    ctaUrl: ctaUrl,
-    ctaLabel: 'Abrir sistema',
-    footer: (function(){
-      const admin = {
-        name:  cfg_('ADMIN_CONTACT_NAME') || 'Administración',
-        email: cfg_('ADMIN_CONTACT_EMAIL') || '',
-        ext:   cfg_('ADMIN_CONTACT_EXTENSION') || ''
-      };
-      return `Reporte generado automáticamente a las 5:00 a. m.<br/>`;
-    })()
+  const byAdmin = {};
+  hoy.forEach(r => {
+    const adminId = r.administracion_id || '1';
+    if (!byAdmin[adminId]) byAdmin[adminId] = [];
+    byAdmin[adminId].push(r);
   });
 
-  const body = hoy.map(r => `• ${fmt12_(r.hora_inicio)}-${fmt12_(r.hora_fin)} · ${r.salon_nombre} · ${r.evento_nombre||''} · ${r.solicitante_nombre} (${r.solicitante_email}) · Asist:${r.cant_personas||0} · Cons:${r.conserje_requerido==='SI'?(r.conserje_nombre?('Asignado:'+r.conserje_nombre):'Requerido'):'N/A'}`).join('\n');
+  Object.keys(byAdmin).forEach(adminId => {
+    const list = byAdmin[adminId] || [];
+    if (!list.length) return;
 
-  const to = recipientsJoin_();
-  if (!to) return;
-  MailApp.sendEmail({
-    to,
-    subject: `Reserva de Salones | Agenda de hoy – ${fmtDMY_(today)}`,
-    htmlBody: html,
-    body,
-    name: cfgForAdmin_('1', 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
-    replyTo: cfgForAdmin_('1', 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    const theme = mailCfg_(adminId);
+    const bySalon = {};
+    list.forEach(r => {
+      bySalon[r.salon_nombre] = bySalon[r.salon_nombre] || [];
+      bySalon[r.salon_nombre].push(r);
+    });
+    Object.keys(bySalon).forEach(k => {
+      bySalon[k].sort((a,b)=> toMin_(a.hora_inicio) - toMin_(b.hora_inicio));
+    });
+
+    const rowsHtml = (items) => items.map(r => {
+      const hostParts = [];
+      if (r.solicitante_nombre) hostParts.push(escapeHtml_(r.solicitante_nombre));
+      if (r.solicitante_email) hostParts.push('(' + escapeHtml_(r.solicitante_email) + ')');
+      const host = hostParts.length ? hostParts.join(' ') : 'Sin datos';
+      const con = (r.conserje_requerido==='SI')
+        ? (r.conserje_nombre ? 'Asignado: ' + escapeHtml_(r.conserje_nombre) : 'Requerido')
+        : 'N/A';
+      return `
+        <tr>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};white-space:nowrap">${fmt12_(r.hora_inicio)} – ${fmt12_(r.hora_fin)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};">${escapeHtml_(r.evento_nombre||'')}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};">${host}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border}; text-align:center">${String(r.cant_personas||0)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border}; text-align:center">${escapeHtml_(r.publico_tipo||'')}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};">${con}</td>
+        </tr>`;
+    }).join('');
+
+    let blocks = '';
+    Object.keys(bySalon).sort().forEach(salon => {
+      blocks += `
+        <tr><td style="padding:12px 0 4px 0;">
+          <div style="font-weight:700;color:${theme.text};font-size:14px;">${escapeHtml_(salon)}</div>
+        </td></tr>
+        <tr><td>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate">
+            <tr style="background:#fafafa">
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600">Hora</td>
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600">Evento</td>
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600">Anfitrión</td>
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600;text-align:center">Asist.</td>
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600;text-align:center">Público</td>
+              <td style="padding:8px 10px;border-bottom:1px solid ${theme.border};font-weight:600">Conserje</td>
+            </tr>
+            ${rowsHtml(bySalon[salon])}
+          </table>
+        </td></tr>`;
+    });
+
+    const title = `Agenda de hoy · ${fmtDMY_(today)}`;
+    const pre = 'Reservas aprobadas y datos logísticos para el día';
+    const html = emailLayout_({
+      title,
+      preheader: pre,
+      htmlInner: emailParagraph_(`Resumen del día <b>${fmtDMY_(today)}</b>. A continuación, el detalle por salón.`) + blocks,
+      ctaUrl,
+      ctaLabel: 'Abrir sistema',
+      footer: 'Reporte generado automáticamente a las 5:00 a. m.',
+      adminId
+    });
+
+    const body = list.map(r => {
+      const con = (r.conserje_requerido==='SI')
+        ? (r.conserje_nombre ? ('Asignado:' + r.conserje_nombre) : 'Requerido')
+        : 'N/A';
+      return `• ${fmt12_(r.hora_inicio)}-${fmt12_(r.hora_fin)} · ${r.salon_nombre} · ${r.evento_nombre||''} · ${r.solicitante_nombre} (${r.solicitante_email}) · Asist:${r.cant_personas||0} · Cons:${con}`;
+    }).join('\n');
+
+    const to = recipientsJoin_(adminId);
+    if (!to) return;
+
+    MailApp.sendEmail({
+      to,
+      subject: `Reserva de Salones | Agenda de hoy – ${fmtDMY_(today)}`,
+      htmlBody: html,
+      body,
+      name: cfgForAdmin_(adminId, 'MAIL_SENDER_NAME') || 'INFOTEP - Reserva de Salones',
+      replyTo: cfgForAdmin_(adminId, 'MAIL_REPLY_TO') || Session.getActiveUser().getEmail()
+    });
   });
 }
 

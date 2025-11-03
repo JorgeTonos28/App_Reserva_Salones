@@ -5,35 +5,140 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <?!= include_('css'); ?>
 </head>
-<body class="container" style="text-align:center">
-  <header class="card">
-    <img src="<?= logoUrl ?>" alt="Logo" style="height:56px"/>
-    <h2>Cancelar reserva</h2>
-  </header>
+<body class="container cancel-page">
+  <main class="cancel-layout">
+    <header class="card cancel-card cancel-card--header">
+      <img id="logo" src="<?= logoUrl ?>" alt="Logo"/>
+      <h2>Cancelar reserva</h2>
+    </header>
 
-  <section class="card" id="info">
-    <div id="resumen" style="text-align:left; max-width:620px; margin:0 auto"></div>
-    <div id="alert" class="notice notice--warning" hidden></div>
-    <div class="hint" style="margin-top:10px">Por favor, indica el motivo de la cancelación (obligatorio):</div>
-    <textarea id="motivo" rows="3" style="width:100%;margin-top:8px;border:1px solid var(--border);border-radius:10px;padding:10px;resize:vertical" placeholder="Ej: Reprogramación del evento"></textarea>
-    <div class="row g" style="justify-content:center;margin-top:12px">
-      <button id="btnCancel" class="btn-blue">Cancelar ahora</button>
-    </div>
-  </section>
+    <section class="card cancel-card" id="info">
+      <div id="resumen" class="cancel-summary-wrapper"></div>
+      <div id="alert" class="notice notice--warning" hidden></div>
+      <div class="hint">Por favor, indica el motivo de la cancelación (obligatorio):</div>
+      <textarea id="motivo" class="cancel-textarea" rows="3" placeholder="Ej: Reprogramación del evento"></textarea>
+      <div class="cancel-actions">
+        <button id="btnCancel" class="btn-blue">Cancelar ahora</button>
+      </div>
+    </section>
+  </main>
 
   <div id="overlay" class="overlay" hidden>
     <div class="spinner"></div>
     <div class="overlay-msg">Procesando…</div>
   </div>
 
+  <div id="modal" class="overlay" hidden>
+    <div class="modal-card">
+      <h3 id="modalTitle">Aviso</h3>
+      <div id="modalBody" style="margin:10px 0;"></div>
+      <div class="actions">
+        <button id="modalOk" class="btn-blue btn--sm" type="button">Entendido</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const token = "<?= cancelToken ?>";
     const $ = s => document.querySelector(s);
-    const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); n=Math.max(0,n-1); if(!n) o.hidden=true;} }; })();
-    // Formatos consistentes con los correos
-    const fmtDMY = (ymd)=>{ const m=String(ymd||'').match(/^(\\d{4})-(\\d{2})-(\\d{2})$/); return m? `${m[3]}/${m[2]}/${m[1]}` : (ymd||''); };
-    const fmt12 = (hhmm)=>{ const m=String(hhmm||'').match(/^(\\d{2}):(\\d{2})$/); if(!m) return hhmm||''; let h=+m[1], mi=+m[2]; const am=h<12; h=(h%12)||12; return (String(h).padStart(2,'0'))+':'+String(mi).padStart(2,'0')+' '+(am?'a.m.':'p.m.'); };
+
+    function escHtml(str){
+      return String(str || '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch] || ch));
+    }
+
+    const Busy = (()=>{
+      let n = 0;
+      const el = () => $('#overlay');
+      return {
+        show(msg){
+          const o = el();
+          if (!o) return;
+          const label = o.querySelector('.overlay-msg');
+          if (label) label.textContent = msg || 'Procesando…';
+          o.hidden = false;
+          n++;
+        },
+        hide(){
+          const o = el();
+          if (!o) return;
+          n = Math.max(0, n - 1);
+          if (!n) o.hidden = true;
+        },
+        reset(){
+          const o = el();
+          if (!o) return;
+          n = 0;
+          o.hidden = true;
+        }
+      };
+    })();
+
+    const Modal = (()=>{
+      const modal = $('#modal');
+      const titleEl = $('#modalTitle');
+      const bodyEl = $('#modalBody');
+      const okBtn = $('#modalOk');
+      if (okBtn){
+        okBtn.addEventListener('click', ()=>{ if (modal) modal.hidden = true; });
+      }
+      return {
+        show(message, title){
+          if (!modal) return;
+          if (titleEl) titleEl.textContent = title || 'Aviso';
+          if (bodyEl) bodyEl.textContent = message || '';
+          modal.hidden = false;
+        },
+        hide(){ if (modal) modal.hidden = true; }
+      };
+    })();
+
+    Busy.show('Cargando…');
+
+    const fmtDMY = (ymd) => {
+      const m = String(ymd||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return m ? `${m[3]}/${m[2]}/${m[1]}` : (ymd || '');
+    };
+    const fmt12 = (hhmm) => {
+      const m = String(hhmm||'').match(/^(\d{2}):(\d{2})$/);
+      if (!m) return hhmm || '';
+      let h = +m[1], mi = +m[2];
+      const am = h < 12;
+      h = (h % 12) || 12;
+      return `${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')} ${am ? 'a.m.' : 'p.m.'}`;
+    };
+
     let reservaDisponible = false;
+    let infoLoaded = false;
+    let logoLoaded = false;
+
+    function finalizeInitialLoad(){
+      if (infoLoaded && logoLoaded){
+        Busy.hide();
+      }
+    }
+
+    (function monitorLogo(){
+      const logo = $('#logo');
+      if (!logo){
+        logoLoaded = true;
+        finalizeInitialLoad();
+        return;
+      }
+      const mark = ()=>{ logoLoaded = true; finalizeInitialLoad(); };
+      if (logo.complete){
+        logoLoaded = true;
+        finalizeInitialLoad();
+      } else {
+        logo.addEventListener('load', mark, { once:true });
+        logo.addEventListener('error', mark, { once:true });
+      }
+    })();
 
     function showAlert(msg, type){
       const box = $('#alert');
@@ -48,60 +153,103 @@
       box.hidden = !msg;
     }
 
+    function buildSummary(x){
+      const details = [
+        ['Salón', x.salon_nombre || ''],
+        ['Fecha', fmtDMY(x.fecha)],
+        ['Horario', `${fmt12(x.hora_inicio)} – ${fmt12(x.hora_fin)}`],
+        ['Evento', x.evento_nombre || ''],
+        ['Anfitrión', `${x.solicitante_nombre||''}${x.solicitante_email ? ` (${x.solicitante_email})` : ''}`],
+        ['Asistentes', String(x.cant_personas||0)],
+        ['Público', x.publico_tipo || '']
+      ];
+      const rows = details.map(([label, value]) => `
+        <div class="cancel-summary__row">
+          <span class="cancel-summary__label">${escHtml(label)}</span>
+          <span class="cancel-summary__value">${escHtml(String(value || ''))}</span>
+        </div>
+      `).join('');
+      return `
+        <div class="section-title">Detalle del evento</div>
+        <div class="cancel-summary">
+          ${rows}
+        </div>
+      `;
+    }
+
     function loadInfo(){
-      Busy.show('Cargando…');
       google.script.run
-        .withSuccessHandler(r=>{
-          Busy.hide();
+        .withSuccessHandler(r => {
           if (!r || !r.ok || !r.data){
-            showAlert((r && r.msg) || 'No se encontró la reserva para este enlace.');
-            $('#btnCancel').disabled = true;
+            const msg = (r && r.msg) || 'No se encontró la reserva para este enlace.';
+            showAlert(msg);
+            Modal.show(msg, 'Reserva no disponible');
+            const btn = $('#btnCancel');
+            const txt = $('#motivo');
+            if (btn) btn.disabled = true;
+            if (txt) txt.disabled = true;
+            reservaDisponible = false;
+            infoLoaded = true;
+            finalizeInitialLoad();
             return;
           }
           const x = r.data;
-          const html = `
-            <div class="section-title">Detalle del evento</div>
-            <table class="resp-table" style="border-collapse:separate">
-              <tr><td data-th="Salón"><span class="val">${x.salon_nombre}</span></td></tr>
-              <tr><td data-th="Fecha"><span class="val">${fmtDMY(x.fecha)}</span></td></tr>
-              <tr><td data-th="Horario"><span class="val">${fmt12(x.hora_inicio)} – ${fmt12(x.hora_fin)}</span></td></tr>
-              <tr><td data-th="Evento"><span class="val">${x.evento_nombre||''}</span></td></tr>
-              <tr><td data-th="Anfitrión"><span class="val">${x.solicitante_nombre||''} (${x.solicitante_email||''})</span></td></tr>
-              <tr><td data-th="Asistentes"><span class="val">${x.cant_personas||0}</span></td></tr>
-              <tr><td data-th="Público"><span class="val">${x.publico_tipo||''}</span></td></tr>
-            </table>`;
-          $('#resumen').innerHTML = html;
+          const resumen = $('#resumen');
+          if (resumen){
+            resumen.innerHTML = buildSummary(x);
+          }
           showAlert('Revisa los detalles y cancela solo si ya no necesitas el espacio.', 'info');
           reservaDisponible = true;
+          infoLoaded = true;
+          finalizeInitialLoad();
         })
-        .withFailureHandler(()=>{ Busy.hide(); alert('Error al cargar la reserva'); })
+        .withFailureHandler(() => {
+          showAlert('No se pudo cargar la información de la reserva.');
+          Modal.show('Error al cargar la reserva.', 'Error');
+          const btn = $('#btnCancel');
+          const txt = $('#motivo');
+          if (btn) btn.disabled = true;
+          if (txt) txt.disabled = true;
+          reservaDisponible = false;
+          infoLoaded = true;
+          finalizeInitialLoad();
+        })
         .apiGetReservaByToken(token);
     }
 
     document.getElementById('btnCancel').onclick = function(){
       if (!reservaDisponible){
-        alert('No es posible cancelar esta reserva con el enlace actual.');
+        Modal.show('No es posible cancelar esta reserva con el enlace actual.', 'Acción no disponible');
         return;
       }
-      const motivo = ($('#motivo').value||'').trim();
-      if (!motivo){ alert('Indica un motivo de cancelación.'); return; }
+      const motivoEl = $('#motivo');
+      const motivo = (motivoEl && motivoEl.value || '').trim();
+      if (!motivo){
+        Modal.show('Indica un motivo de cancelación.', 'Motivo requerido');
+        return;
+      }
       Busy.show('Cancelando…');
       google.script.run
-        .withSuccessHandler(r=>{
+        .withSuccessHandler(r => {
           Busy.hide();
           if (r && r.ok){
             showAlert('La reserva fue cancelada correctamente.', 'info');
-            alert('Reserva cancelada.');
-            $('#btnCancel').disabled = true;
+            Modal.show('La reserva fue cancelada correctamente.', 'Reserva cancelada');
+            if (motivoEl) motivoEl.disabled = true;
+            const btn = $('#btnCancel');
+            if (btn) btn.disabled = true;
             reservaDisponible = false;
           } else {
-            alert((r && r.msg) || 'No se pudo cancelar');
+            Modal.show((r && r.msg) || 'No se pudo cancelar la reserva.', 'No se pudo cancelar');
           }
         })
-        .withFailureHandler(()=>{ Busy.hide(); alert('Error al cancelar'); })
+        .withFailureHandler(() => {
+          Busy.hide();
+          Modal.show('Error al cancelar la reserva.', 'Error');
+        })
         .apiCancelarReservaByToken(token, motivo);
     };
-    
+
     loadInfo();
   </script>
 </body></html>

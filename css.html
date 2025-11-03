@@ -271,7 +271,7 @@
   .btn-toggle[aria-pressed="true"]{ box-shadow:0 0 0 2px rgba(0,0,0,.05) inset; filter:saturate(1.1); }
 
   /* Botón solo-ícono, compacto */
-  .icon-btn{
+  .icon-btn{ 
     display:inline-flex;
     align-items:center;
     justify-content:center;
@@ -292,6 +292,7 @@
     transform:rotate(20deg);
     box-shadow:0 3px 8px rgba(0,0,0,.18);
   }
+  .label-row .icon-btn{ width:34px; height:34px; }
 
   /* ===== Responsive table -> cards (Mis reservas) ===== */
   .resp-table{ width:100%; border-collapse:collapse; }
@@ -302,6 +303,24 @@
   .pill--bad{ background:#fef2f2; color:#991b1b; border-color:#fee2e2; }   /* rojo suave */
   .pill--other{ background:#eef2ff; color:#1e40af; border-color:#e5e7eb; } /* azul suave */
   .pill--pending{ background:#fef3c7; color:#92400e; border-color:#fde68a; }
+
+  .cell-main{ display:block; font-weight:600; color:#111827; }
+  .cell-meta{ display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; font-size:12px; color:#4b5563; }
+  .cell-meta span{ display:flex; align-items:center; }
+  .cell-meta .cell-sep{ color:#9ca3af; font-weight:600; }
+  .cell-note{ display:block; margin-top:4px; font-size:12px; color:#4b5563; }
+
+  .cancel-page{ min-height:100vh; display:flex; flex-direction:column; }
+  .cancel-layout{ width:100%; max-width:620px; margin:24px auto; padding:0 16px; display:flex; flex-direction:column; gap:18px; }
+  .cancel-card{ text-align:left; }
+  .cancel-card--header{ display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; }
+  .cancel-card--header img{ height:56px; width:auto; }
+  .cancel-summary{ border:1px solid var(--border); border-radius:12px; background:#f9fafb; padding:14px 16px; display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+  .cancel-summary__row{ display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .cancel-summary__label{ font-weight:600; color:#1f2937; }
+  .cancel-summary__value{ color:#374151; }
+  .cancel-textarea{ width:100%; min-height:110px; border:1px solid var(--border); border-radius:10px; padding:12px; font-family:inherit; font-size:14px; resize:vertical; box-sizing:border-box; margin-top:8px; }
+  .cancel-actions{ display:flex; justify-content:center; margin-top:16px; }
   
   /* ======= Responsive ======= */
   @media (max-width: 1024px){
@@ -316,7 +335,7 @@
 
     /* Botón “Reservar” pegado abajo y siempre visible en móvil */
     .actions{ position:sticky; bottom:8px; background:#fff; padding-top:6px; z-index:5; }
-    
+
     .cards-area{
       /* cubre el fondo blanco de la .card contenedora */
       margin-left:-16px;    /* igual al padding de .card */
@@ -385,5 +404,11 @@
     }
 
     .resp-table td + td { border-top:1px dashed #eee; }
+  }
+  @media (max-width: 600px){
+    .cancel-layout{ margin:16px auto; padding:0 12px; }
+    .cancel-summary__row{ flex-direction:column; align-items:flex-start; gap:4px; }
+    .cancel-actions{ justify-content:stretch; }
+    .cancel-actions .btn-blue{ width:100%; }
   }
 </style>
