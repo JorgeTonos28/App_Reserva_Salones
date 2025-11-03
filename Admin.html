@@ -73,18 +73,6 @@
             <label for="u-prio">Prioridad <span class="required">*</span></label>
             <input id="u-prio" type="number" min="0" placeholder="Ej: 0" required />
           </div>
-          <div class="user-field user-field--full">
-            <label for="u-prio-salones-picker">Salones con prioridad</label>
-            <div id="u-prio-salones-list" class="chip-list" data-empty-text="Sin salones priorizados (opcional)"></div>
-            <div class="chip-actions">
-              <select id="u-prio-salones-picker">
-                <option value="">[Seleccionar salón]</option>
-              </select>
-              <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
-            </div>
-            <small id="u-prio-salones-hint" class="muted">Déjalo vacío si la prioridad aplica para todos los salones.</small>
-            <input id="u-prio-salones" type="hidden" />
-          </div>
           <div class="user-field">
             <label for="u-estado">Estado <span class="required">*</span></label>
             <select id="u-estado" required>
@@ -102,6 +90,24 @@
             <label for="u-admin">Administración</label>
             <input id="u-admin" type="number" min="1" placeholder="Ej: 1" />
           </div>
+        </div>
+        <div class="user-priority-block">
+          <div class="user-priority-title-row">
+            <span class="user-priority-title">Salones con prioridad</span>
+            <span class="user-priority-optional">Opcional</span>
+          </div>
+          <div id="u-prio-salones-list" class="chip-list" data-empty-text="Sin salones priorizados (opcional)"></div>
+          <div class="user-priority-controls">
+            <label class="sr-only" for="u-prio-salones-picker">Seleccionar salón con prioridad</label>
+            <div class="chip-actions">
+              <select id="u-prio-salones-picker">
+                <option value="">[Seleccionar salón]</option>
+              </select>
+              <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
+            </div>
+          </div>
+          <small id="u-prio-salones-hint" class="muted">Déjalo vacío si la prioridad aplica para todos los salones.</small>
+          <input id="u-prio-salones" type="hidden" />
         </div>
       </div>
       <div class="modal-footer">
