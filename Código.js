@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.6-2025-11-07';
+const APP_VERSION = 'salones-v10.7-2025-11-08';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -446,6 +446,20 @@ function adminPresetFromParams_(params){
       code = CON_UNASSIGNED_CODE;
     }
     if (code) out.conserjeCodigo = code;
+  }
+  if (out.estado){
+    const est = out.estado.toUpperCase();
+    if (/PEND/.test(est)){
+      out.estado = 'PENDIENTE';
+    } else if (/APROB/.test(est)){
+      out.estado = 'APROBADA';
+    } else if (/CANCEL/.test(est)){
+      out.estado = 'CANCELADA';
+    } else if (/TOD/.test(est)){
+      out.estado = '';
+    } else {
+      out.estado = est;
+    }
   }
   return out;
 }

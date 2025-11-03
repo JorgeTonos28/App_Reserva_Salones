@@ -146,32 +146,59 @@
         <button id="btnExport" class="btn btn-blue btn--sm" type="button">Exportar a Sheets</button>
       </div>
     </div>
-    <div class="row g">
-      <input id="f1" type="date" placeholder="Desde" />
-      <input id="f2" type="date" placeholder="Hasta" />
-      <input id="fHora1" type="time" placeholder="Hora desde" />
-      <input id="fHora2" type="time" placeholder="Hora hasta" />
+    <div class="filters-row">
+      <div class="filter-box">
+        <label for="f1">Fecha desde</label>
+        <input id="f1" type="date" placeholder="Desde" />
+      </div>
+      <div class="filter-box">
+        <label for="f2">Fecha hasta</label>
+        <input id="f2" type="date" placeholder="Hasta" />
+      </div>
+      <div class="filter-box">
+        <label for="fHora1">Hora desde</label>
+        <input id="fHora1" type="time" placeholder="Hora desde" />
+      </div>
+      <div class="filter-box">
+        <label for="fHora2">Hora hasta</label>
+        <input id="fHora2" type="time" placeholder="Hora hasta" />
+      </div>
     </div>
-    <div class="row g" style="margin-top:10px;">
-      <select id="fSalon">
-        <option value="">[Todos los salones]</option>
-      </select>
-      <select id="fEstado">
-        <option value="">[Todos los estados]</option>
-        <option value="PENDIENTE">Pendiente</option>
-        <option value="APROBADA">Aprobada</option>
-        <option value="CANCELADA">Cancelada</option>
-      </select>
-      <select id="fSolicitante">
-        <option value="">[Todos los solicitantes]</option>
-      </select>
-      <select id="fConserje">
-        <option value="">[Todos los conserjes]</option>
-      </select>
+    <div class="filters-row" style="margin-top:10px;">
+      <div class="filter-box">
+        <label for="fSalon">Salón</label>
+        <select id="fSalon">
+          <option value="">[Todos los salones]</option>
+        </select>
+      </div>
+      <div class="filter-box">
+        <label for="fEstado">Estado</label>
+        <select id="fEstado">
+          <option value="">[Todos los estados]</option>
+          <option value="PENDIENTE">Pendiente</option>
+          <option value="APROBADA">Aprobada</option>
+          <option value="CANCELADA">Cancelada</option>
+        </select>
+      </div>
+      <div class="filter-box">
+        <label for="fSolicitante">Solicitante</label>
+        <select id="fSolicitante">
+          <option value="">[Todos los solicitantes]</option>
+        </select>
+      </div>
+      <div class="filter-box">
+        <label for="fConserje">Conserje</label>
+        <select id="fConserje">
+          <option value="">[Todos los conserjes]</option>
+        </select>
+      </div>
     </div>
-    <div class="row g" style="margin-top:10px; align-items:stretch;">
-      <input id="fTexto" placeholder="Buscar en cualquier campo (separa por espacios)" />
-      <div class="actions-inline" style="flex:0 0 auto; gap:8px;">
+    <div class="filters-row filters-row--end" style="margin-top:10px;">
+      <div class="filter-box" style="flex:1 1 320px;">
+        <label for="fTexto">Búsqueda por texto</label>
+        <input id="fTexto" placeholder="Buscar en cualquier campo (separa por espacios)" />
+      </div>
+      <div class="filter-actions">
         <button id="btnBuscar" class="btn-blue btn--sm" type="button">Buscar</button>
       </div>
     </div>
