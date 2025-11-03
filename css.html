@@ -20,6 +20,14 @@
   .row.g{ gap:10px; align-items:center; }
   .g > *{ flex:1 1 240px; min-width:220px; }
 
+  .filters-row{ display:flex; flex-wrap:wrap; gap:10px; }
+  .filters-row .filter-box{ flex:1 1 220px; min-width:190px; display:flex; flex-direction:column; }
+  .filters-row .filter-box label{ font-size:12px; color:#4b5563; margin:0 0 6px; font-weight:500; }
+  .filters-row .filter-box input,
+  .filters-row .filter-box select{ flex:1 1 auto; height:42px; }
+  .filters-row.filters-row--end{ align-items:flex-end; }
+  .filter-actions{ display:flex; gap:8px; align-items:flex-end; flex:0 0 auto; }
+
   /* ======= Inputs / selects uniformes ======= */
   input, select{
     width:100%;

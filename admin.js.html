@@ -3,10 +3,13 @@ const $ = s => document.querySelector(s);
 const ME = (window.__ME__ || { prioridad: 0 });
 const ADMIN_SCOPE = String((ME && (ME.administracion_id || ME.admin_id || ME.adminScope || '1')) || '1').trim() || '1';
 const IS_GENERAL_ADMIN = ADMIN_SCOPE === '1';
+const CON_UNASSIGNED = window.__CON_UNASSIGNED__ || '__UNASSIGNED__';
 let __SALONES_ALL__ = [];
 let __SALONES_MANAGE__ = [];
 let __SALON_CFG_MAP__ = {};
 let __SLOT_INFO_ADMIN__ = {};
+let __LAST_HIST_FILTERS__ = {};
+let __PRESET_APPLIED__ = false;
 const DEFAULT_DUR_CFG = {
   min: Number(window.__DUR_MIN__ || 30),
   max: Number(window.__DUR_MAX__ || 240),
@@ -175,19 +178,37 @@ function addDaysYMD(startYmd, days){
   const dd2 = String(dt.getDate()).padStart(2,'0');
   return `${yy}-${mm}-${dd2}`;
 }
-function setDefaultAdminRange(days=30){
+function syncHistorialDateBounds(){
   const f1 = $('#f1'), f2 = $('#f2');
-  const start = todayYMD();
-  const end   = addDaysYMD(start, days);
-  if (f1) f1.value = start;
-  if (f2) f2.value = end;
-  // Evita rango inverso (como en “Mis reservas”)
-  if (f1 && f2){
-    f2.min = f1.value;
+  if (!f1 || !f2) return;
+  f2.min = f1.value || '';
+  if (f2.value){
+    if (f1.value && f1.value > f2.value){ f1.value = f2.value; }
     f1.max = f2.value;
-    f1.onchange = () => { f2.min = f1.value; if (f2.value && f2.value < f1.value) f2.value = f1.value; };
-    f2.onchange = () => { f1.max = f2.value; if (f1.value && f1.value > f2.value) f1.value = f2.value; };
+  } else {
+    f1.max = '';
   }
+}
+
+function setDefaultAdminRange(days=30, opts={}){
+  const f1 = $('#f1'), f2 = $('#f2');
+  const start = opts.start || todayYMD();
+  const end   = Object.prototype.hasOwnProperty.call(opts, 'end')
+    ? opts.end
+    : (opts.openEnd ? '' : addDaysYMD(start, days));
+  if (f1) f1.value = start;
+  if (f2 !== null && f2 !== undefined){
+    if (f2) f2.value = end || '';
+  }
+  if (f1 && !f1.__histDateBound){
+    f1.addEventListener('change', syncHistorialDateBounds);
+    f1.__histDateBound = true;
+  }
+  if (f2 && !f2.__histDateBound){
+    f2.addEventListener('change', syncHistorialDateBounds);
+    f2.__histDateBound = true;
+  }
+  syncHistorialDateBounds();
 }
 
 function drawSalones(arr){
@@ -212,6 +233,162 @@ function drawSalones(arr){
   }).join('');
   el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
+}
+
+function populateHistorialSalonFilter(list){
+  const sel = document.getElementById('fSalon');
+  if (!sel) return;
+  const previous = sel.value;
+  const options = ['<option value="">[Todos los salones]</option>'];
+  (list||[]).forEach(s => {
+    options.push(`<option value="${escHtml(s.id)}">${escHtml(s.nombre)}</option>`);
+  });
+  sel.innerHTML = options.join('');
+  if (previous && (list||[]).some(s => String(s.id) === String(previous))){
+    sel.value = previous;
+  }
+}
+
+function updateSolicitanteFilterOptions(items, selected){
+  const sel = document.getElementById('fSolicitante');
+  if (!sel) return;
+  const previous = selected || sel.value || '';
+  const options = ['<option value="">[Todos los solicitantes]</option>'];
+  (items||[]).forEach(item => {
+    options.push(`<option value="${escHtml(item.email)}">${escHtml(item.label)}</option>`);
+  });
+  sel.innerHTML = options.join('');
+  if (previous && (items||[]).some(it => it.email === previous)){
+    sel.value = previous;
+  } else {
+    sel.value = '';
+  }
+}
+
+function updateConserjeFilterOptions(items, selected){
+  const sel = document.getElementById('fConserje');
+  if (!sel) return;
+  const previous = selected || sel.value || '';
+  const options = ['<option value="">[Todos los conserjes]</option>'];
+  let hasUnassigned = false;
+  (items||[]).forEach(item => {
+    if (!item) return;
+    if (item.codigo === CON_UNASSIGNED){ hasUnassigned = true; }
+    options.push(`<option value="${escHtml(item.codigo)}">${escHtml(item.label)}</option>`);
+  });
+  sel.innerHTML = options.join('');
+  if (previous && (items||[]).some(it => it.codigo === previous)){
+    sel.value = previous;
+  } else if (previous === CON_UNASSIGNED){
+    sel.value = hasUnassigned ? CON_UNASSIGNED : '';
+  } else {
+    sel.value = '';
+  }
+}
+
+function updateDynamicFilters(meta, filters){
+  const metaObj = meta || {};
+  updateSolicitanteFilterOptions(metaObj.solicitantes || [], filters && filters.solicitanteEmail);
+  updateConserjeFilterOptions(metaObj.conserjes || [], filters && filters.conserjeCodigo);
+}
+
+function resetHistorialFilters(){
+  setDefaultAdminRange(30, { openEnd:true });
+  const hora1 = document.getElementById('fHora1');
+  const hora2 = document.getElementById('fHora2');
+  if (hora1) hora1.value = '';
+  if (hora2) hora2.value = '';
+  const estado = document.getElementById('fEstado');
+  if (estado) estado.value = '';
+  const solicitante = document.getElementById('fSolicitante');
+  if (solicitante) solicitante.value = '';
+  const conserje = document.getElementById('fConserje');
+  if (conserje) conserje.value = '';
+  const texto = document.getElementById('fTexto');
+  if (texto) texto.value = '';
+  const salon = document.getElementById('fSalon');
+  if (salon) salon.value = '';
+  syncHistorialDateBounds();
+}
+
+function collectHistorialFilters(){
+  const f1 = $('#f1'), f2 = $('#f2');
+  const hora1 = normalizeHHMM($('#fHora1') ? $('#fHora1').value : '');
+  const hora2 = normalizeHHMM($('#fHora2') ? $('#fHora2').value : '');
+  if ((hora1 && !hora2) || (!hora1 && hora2)){
+    modal('Completa ambos campos de hora para aplicar el filtro.');
+    return null;
+  }
+  if (hora1 && hora2 && hora1 > hora2){
+    modal('La hora inicial debe ser menor o igual a la hora final.');
+    return null;
+  }
+  const filters = {
+    fechaDesde: f1 && f1.value ? f1.value : '',
+    fechaHasta: f2 && f2.value ? f2.value : '',
+    horaDesde: hora1 || '',
+    horaHasta: hora2 || '',
+    salonId: ($('#fSalon') && $('#fSalon').value) || '',
+    estado: ($('#fEstado') && $('#fEstado').value) || '',
+    solicitanteEmail: ($('#fSolicitante') && $('#fSolicitante').value) || '',
+    conserjeCodigo: ($('#fConserje') && $('#fConserje').value) || '',
+    texto: ($('#fTexto') && $('#fTexto').value || '').trim()
+  };
+  if (filters.estado) filters.estado = filters.estado.toUpperCase();
+  return filters;
+}
+
+function applyPresetFilters(){
+  const preset = window.__ADMIN_PRESET__ || {};
+  if (__PRESET_APPLIED__){
+    syncHistorialDateBounds();
+    return;
+  }
+  if (!preset || typeof preset !== 'object'){
+    __PRESET_APPLIED__ = true;
+    syncHistorialDateBounds();
+    return;
+  }
+  const assign = (id, value) => {
+    if (value === undefined || value === null || value === '') return true;
+    const el = document.getElementById(id);
+    if (!el){ return false; }
+    el.value = value;
+    return el.value === value;
+  };
+  assign('f1', preset.fechaDesde);
+  assign('f2', preset.fechaHasta);
+  assign('fHora1', preset.horaDesde);
+  assign('fHora2', preset.horaHasta);
+  assign('fEstado', preset.estado ? String(preset.estado).toUpperCase() : '');
+  assign('fTexto', preset.texto);
+  const salonOk = !preset.salonId || assign('fSalon', preset.salonId);
+  const solicitanteOk = !preset.solicitanteEmail || assign('fSolicitante', preset.solicitanteEmail.toLowerCase());
+  const conserjeOk = !preset.conserjeCodigo || assign('fConserje', preset.conserjeCodigo);
+  if (!salonOk || !solicitanteOk || !conserjeOk){
+    // Intenta de nuevo cuando las opciones estén disponibles
+    syncHistorialDateBounds();
+    return;
+  }
+  __PRESET_APPLIED__ = true;
+  syncHistorialDateBounds();
+}
+
+function exportarReservas(){
+  const filters = collectHistorialFilters();
+  if (!filters) return;
+  Busy.show('Generando reporte…');
+  google.script.run
+    .withSuccessHandler(r => {
+      Busy.hide();
+      if (r && r.ok && r.url){
+        window.open(r.url, '_blank');
+      } else {
+        modal((r && r.msg) || 'No se pudo generar el reporte.');
+      }
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo generar el reporte.'); })
+    .apiExportReservasAdmin(filters);
 }
 function toggleSalon(id, on){ Busy.show('Guardando…'); google.script.run
   .withSuccessHandler(r=>{ Busy.hide(); if(r&&r.ok){ loadSalones(); } else modal(r&&r.msg||'No se pudo actualizar'); })
@@ -374,6 +551,8 @@ function loadSalones(){
       drawSalones(manage);
       buildSalonCaches(all);
       populateSalonSelect(all);
+      populateHistorialSalonFilter(all);
+      applyPresetFilters();
       initSalonCapacityAdmin(all);
       renderDurationsFromConfigAdmin();
       // limpia el tag de cap máx al cargar
@@ -385,11 +564,19 @@ function loadSalones(){
 }
 
 function buscar(){
-  const f1 = $('#f1').value || ''; const f2 = $('#f2').value || '';
-  Busy.show('Buscando…'); google.script.run
-    .withSuccessHandler(r=>{ Busy.hide(); drawReservas((r&&r.data)||[]); })
-    .withFailureHandler(e=>{ Busy.hide(); modal('No se pudo cargar reservas'); })
-    .apiListReservasAdmin(f1, f2);
+  const filters = collectHistorialFilters();
+  if (!filters) return;
+  Busy.show('Buscando…');
+  __LAST_HIST_FILTERS__ = { ...filters };
+  google.script.run
+    .withSuccessHandler(r=>{
+      Busy.hide();
+      const data = (r && r.data) || [];
+      drawReservas(data);
+      updateDynamicFilters((r && r.meta) || {}, filters);
+    })
+    .withFailureHandler(()=>{ Busy.hide(); modal('No se pudo cargar reservas'); })
+    .apiListReservasAdmin(filters);
 }
 
 function init(){
@@ -398,10 +585,24 @@ function init(){
     $('#logo').src = (window.__LOGO_URL__ || '');
   }catch(e){/* noop */}
 
+  resetHistorialFilters();
   loadSalones();
-  setDefaultAdminRange(30);
-  loadConserjeMap(()=> buscar());
+  loadConserjeMap(()=> {
+    applyPresetFilters();
+    const waitAndSearch = ()=>{
+      if (__PRESET_APPLIED__){
+        buscar();
+      } else {
+        setTimeout(waitAndSearch, 120);
+      }
+    };
+    waitAndSearch();
+  });
   $('#btnBuscar').onclick = buscar;
+  const btnReset = document.getElementById('btnReset');
+  if (btnReset) btnReset.onclick = ()=>{ resetHistorialFilters(); buscar(); };
+  const btnExport = document.getElementById('btnExport');
+  if (btnExport) btnExport.onclick = exportarReservas;
   if (IS_GENERAL_ADMIN){
     const btnCon = document.getElementById('btnConserjes');
     if (btnCon) btnCon.onclick = openConserjesModal;

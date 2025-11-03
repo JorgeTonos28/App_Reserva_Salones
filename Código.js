@@ -40,7 +40,8 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.6-2025-11-07';
+const APP_VERSION = 'salones-v10.7-2025-11-08';
+const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
 function nowStr_(){ return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'); }
@@ -425,6 +426,44 @@ function isAdminEmail_(email){
 }
 
 // ========= Web (un solo enlace) =========
+function adminPresetFromParams_(params){
+  const out = {};
+  if (!params) return out;
+  const val = key => String(params[key] || '').trim();
+  const ymd = s => String(s || '').trim().slice(0,10);
+  const hh = s => normHHMM_(String(s || '').trim());
+  if (params.histDesde) out.fechaDesde = ymd(params.histDesde);
+  if (params.histHasta) out.fechaHasta = ymd(params.histHasta);
+  if (params.histHoraDesde) out.horaDesde = hh(params.histHoraDesde);
+  if (params.histHoraHasta) out.horaHasta = hh(params.histHoraHasta);
+  if (params.histSalon) out.salonId = val('histSalon');
+  if (params.histEstado) out.estado = val('histEstado').toUpperCase();
+  if (params.histSolicitante) out.solicitanteEmail = val('histSolicitante').toLowerCase();
+  if (params.histTexto) out.texto = val('histTexto');
+  if (params.histConserje){
+    let code = val('histConserje');
+    if (/^(none|ninguno|sin|sin-asignar)$/i.test(code)){
+      code = CON_UNASSIGNED_CODE;
+    }
+    if (code) out.conserjeCodigo = code;
+  }
+  if (out.estado){
+    const est = out.estado.toUpperCase();
+    if (/PEND/.test(est)){
+      out.estado = 'PENDIENTE';
+    } else if (/APROB/.test(est)){
+      out.estado = 'APROBADA';
+    } else if (/CANCEL/.test(est)){
+      out.estado = 'CANCELADA';
+    } else if (/TOD/.test(est)){
+      out.estado = '';
+    } else {
+      out.estado = est;
+    }
+  }
+  return out;
+}
+
 function doGet(e){
   const me = (Session.getActiveUser().getEmail()||'').toLowerCase();
   const u  = getUser_();
@@ -504,6 +543,8 @@ function doGet(e){
     t.appVersion = APP_VERSION;
     t.logoUrl = getLogoDataUrl(128) || getLogoUrl();
     t.me = u;
+    t.initialFilters = adminPresetFromParams_(e && e.parameter);
+    t.conserjeUnassignedCode = CON_UNASSIGNED_CODE;
     return t.evaluate()
       .setTitle('Reserva de Salones – Admin')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -1170,21 +1211,222 @@ function apiListMisReservas(fechaDesde, fechaHasta){
   return {ok:true, data};
 }
 
-function apiListReservasAdmin(fechaDesde, fechaHasta){
+function apiListReservasAdmin(filtersOrDesde, fechaHasta){
   const me = getUser_();
   if (!isAdminEmail_((me && me.email) || '')) return {ok:false, msg:'No autorizado'};
   const scope = adminScopeForUser_(me);
-  const lr = SH_RES.getLastRow(); if (lr<2) return {ok:true, data:[]};
+  const filters = normalizeAdminHistFilters_(filtersOrDesde, fechaHasta);
+  const dataset = getReservasForAdminScope_(scope);
+  const result = filterReservasAdminDataset_(dataset, filters);
+  return { ok:true, data: result.data, meta: result.meta };
+}
+
+function apiExportReservasAdmin(filters){
+  const me = getUser_();
+  if (!isAdminEmail_((me && me.email) || '')) return {ok:false, msg:'No autorizado'};
+  const scope = adminScopeForUser_(me);
+  const parsed = normalizeAdminHistFilters_(filters || {});
+  const dataset = getReservasForAdminScope_(scope);
+  const result = filterReservasAdminDataset_(dataset, parsed);
+  const data = result.data || [];
+  if (!data.length) return { ok:false, msg:'No hay reservas con los filtros seleccionados.' };
+
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  const title = `Historial de reservas ${stamp}`;
+  const ss = SpreadsheetApp.create(title);
+  const sheet = ss.getActiveSheet();
+  const headers = [
+    'ID', 'Fecha', 'Hora inicio', 'Hora fin', 'Salón', 'ID salón', 'Evento',
+    'Solicitante', 'Correo solicitante', 'Departamento', 'Estado', 'Requiere conserje',
+    'Conserje asignado', 'Código conserje', 'Conserje notificado', 'Cant. personas',
+    'Tipo de público', 'Creado en', 'Actualizado en', 'Cancelado por', 'Motivo cancelación'
+  ];
+  const rows = data.map(r => [
+    r.id,
+    r.fecha,
+    r.hora_inicio,
+    r.hora_fin,
+    r.salon_nombre,
+    r.salon_id,
+    r.evento_nombre || '',
+    r.solicitante_nombre || '',
+    r.solicitante_email || '',
+    r.departamento || '',
+    r.estado || '',
+    r.conserje_requerido || '',
+    r.conserje_nombre || '',
+    r.conserje_codigo_asignado || '',
+    r.conserje_notificado || '',
+    Number(r.cant_personas || 0),
+    r.publico_tipo || '',
+    r.creado_en || '',
+    r.actualizado_en || '',
+    r.cancelado_por || '',
+    r.cancelado_motivo || ''
+  ]);
+  sheet.clear();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers.length);
+  const adminEmail = (me && me.email) || '';
+  if (adminEmail){
+    try { DriveApp.getFileById(ss.getId()).addEditor(adminEmail); } catch(e){}
+  }
+  return { ok:true, url: ss.getUrl(), total: rows.length };
+}
+
+function getReservasForAdminScope_(scope){
+  const lr = SH_RES.getLastRow(); if (lr<2) return [];
   const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
-  const d1 = fechaDesde ? toDate_(fechaDesde) : new Date(2000,0,1);
-  const d2 = fechaHasta ? toDate_(fechaHasta) : new Date(2100,0,1);
-  let data = rows
-    .filter(r => { const d=toDate_(r[3]); return d>=d1 && d<=d2; })
-    .filter(r => normalizeAdminId_(r[23]||'1') === scope)
-    .map(r => toReservaObj_(r));
   const cmap = conserjeMap_();
-  data = data.map(x => ({ ...x, conserje_nombre: (x.conserje_codigo_asignado && cmap[x.conserje_codigo_asignado]?.nombre) || '' }));
-  return {ok:true, data};
+  return rows
+    .map(r => toReservaObj_(r))
+    .filter(r => normalizeAdminId_(r.administracion_id||'1') === scope)
+    .map(r => ({
+      ...r,
+      conserje_nombre: (r.conserje_codigo_asignado && cmap[r.conserje_codigo_asignado]?.nombre) || ''
+    }));
+}
+
+function normalizeAdminHistFilters_(rawOrDesde, fechaHasta){
+  let raw = {};
+  if (rawOrDesde && typeof rawOrDesde === 'object' && !Array.isArray(rawOrDesde)){
+    raw = rawOrDesde || {};
+  } else {
+    raw = { fechaDesde: rawOrDesde, fechaHasta };
+  }
+  const out = {
+    fechaDesde: String(raw.fechaDesde || raw.desde || raw.f1 || '').slice(0,10),
+    fechaHasta: String(raw.fechaHasta || raw.hasta || raw.f2 || '').slice(0,10),
+    horaDesde: normHHMM_(raw.horaDesde || raw.horaInicio || raw.h1 || ''),
+    horaHasta: normHHMM_(raw.horaHasta || raw.horaFin || raw.h2 || ''),
+    salonId: String(raw.salonId || raw.salon || '').trim(),
+    solicitanteEmail: String(raw.solicitanteEmail || raw.solicitante || '').trim().toLowerCase(),
+    estado: String(raw.estado || '').trim().toUpperCase(),
+    conserjeCodigo: String(raw.conserjeCodigo || raw.conserje || '').trim(),
+    texto: String(raw.texto || raw.query || '').trim()
+  };
+  if (out.estado === 'TODOS') out.estado = '';
+  if (/^(none|ninguno|sin|sin-asignar)$/i.test(out.conserjeCodigo)) out.conserjeCodigo = CON_UNASSIGNED_CODE;
+  if (!out.conserjeCodigo && String(raw.conserje || '').toUpperCase() === CON_UNASSIGNED_CODE) out.conserjeCodigo = CON_UNASSIGNED_CODE;
+  out.textTokens = out.texto ? out.texto.split(/\s+/).filter(Boolean).map(s => s.toLowerCase()) : [];
+  return out;
+}
+
+function filterReservasAdminDataset_(dataset, filters){
+  const d1 = filters.fechaDesde ? toDate_(filters.fechaDesde) : new Date(2000,0,1);
+  const d2 = filters.fechaHasta ? toDate_(filters.fechaHasta) : new Date(2100,0,1);
+  const d1n = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  const d2n = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  const horaIniRaw = toMin_(filters.horaDesde);
+  const horaFinRaw = toMin_(filters.horaHasta);
+  const horaIni = isNaN(horaIniRaw) ? null : horaIniRaw;
+  const horaFin = isNaN(horaFinRaw) ? null : horaFinRaw;
+  const estado = String(filters.estado || '').toUpperCase();
+  const salonId = String(filters.salonId || '').trim();
+  const tokens = Array.isArray(filters.textTokens) ? filters.textTokens : [];
+
+  let base = dataset.filter(r => {
+    const d = toDate_(r.fecha);
+    if (isNaN(d)) return false;
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    return day >= d1n && day <= d2n;
+  });
+
+  if (salonId) base = base.filter(r => String(r.salon_id || '').trim() === salonId);
+  if (estado) base = base.filter(r => String(r.estado || '').toUpperCase() === estado);
+
+  if (horaIni !== null && horaFin !== null){
+    const minIni = Math.min(horaIni, horaFin);
+    const maxFin = Math.max(horaIni, horaFin);
+    base = base.filter(r => {
+      const ini = toMin_(r.hora_inicio);
+      const fin = toMin_(r.hora_fin);
+      if (isNaN(ini) || isNaN(fin)) return false;
+      return !(fin < minIni || ini > maxFin);
+    });
+  }
+
+  if (tokens.length){
+    base = base.filter(r => {
+      const haystack = [
+        r.id, r.fecha, r.hora_inicio, r.hora_fin, r.salon_id, r.salon_nombre,
+        r.evento_nombre, r.solicitante_nombre, r.solicitante_email, r.estado,
+        r.conserje_nombre, r.conserje_codigo_asignado, r.departamento,
+        r.publico_tipo, r.conserje_requerido, r.conserje_notificado,
+        r.cancelado_por, r.cancelado_motivo
+      ].join(' ').toLowerCase();
+      return tokens.every(tok => haystack.indexOf(tok) !== -1);
+    });
+  }
+
+  const applySolicitanteFilter = arr => {
+    if (!filters.solicitanteEmail) return arr.slice();
+    const target = String(filters.solicitanteEmail || '').toLowerCase();
+    return arr.filter(r => String(r.solicitante_email || '').toLowerCase() === target);
+  };
+
+  const applyConserjeFilter = arr => {
+    const code = filters.conserjeCodigo;
+    if (!code) return arr.slice();
+    if (code === CON_UNASSIGNED_CODE){
+      return arr.filter(r => String(r.conserje_requerido||'').toUpperCase()==='SI' && !String(r.conserje_codigo_asignado||'').trim());
+    }
+    return arr.filter(r => String(r.conserje_codigo_asignado||'').trim() === code);
+  };
+
+  const listForSolicitantes = applyConserjeFilter(base);
+  const listForConserjes = applySolicitanteFilter(base);
+  const data = applySolicitanteFilter(applyConserjeFilter(base));
+
+  data.sort((a,b) => {
+    const cmpFecha = String(a.fecha||'').localeCompare(String(b.fecha||''));
+    if (cmpFecha !== 0) return cmpFecha;
+    return String(a.hora_inicio||'').localeCompare(String(b.hora_inicio||''));
+  });
+
+  return {
+    data,
+    meta: {
+      solicitantes: buildSolicitanteMeta_(listForSolicitantes),
+      conserjes: buildConserjeMeta_(listForConserjes)
+    }
+  };
+}
+
+function buildSolicitanteMeta_(arr){
+  const map = {};
+  arr.forEach(r => {
+    const email = String(r.solicitante_email || '').trim().toLowerCase();
+    if (!email || map[email]) return;
+    const nombre = String(r.solicitante_nombre || '').trim();
+    const label = nombre ? `${nombre} – ${email}` : email;
+    map[email] = { email, nombre, label };
+  });
+  return Object.values(map).sort((a,b) => a.label.localeCompare(b.label, 'es', { sensitivity:'base' }));
+}
+
+function buildConserjeMeta_(arr){
+  const map = {};
+  let hasUnassigned = false;
+  arr.forEach(r => {
+    if (String(r.conserje_requerido||'').toUpperCase()!=='SI') return;
+    const code = String(r.conserje_codigo_asignado || '').trim();
+    if (!code){
+      hasUnassigned = true;
+      return;
+    }
+    if (map[code]) return;
+    const nombre = String(r.conserje_nombre || '').trim();
+    const label = nombre ? `${nombre} (${code})` : code;
+    map[code] = { codigo: code, nombre, label };
+  });
+  const list = Object.values(map).sort((a,b) => a.label.localeCompare(b.label, 'es', { sensitivity:'base' }));
+  if (hasUnassigned){
+    list.unshift({ codigo: CON_UNASSIGNED_CODE, nombre: '', label: 'Sin asignar (requiere conserje)', unassigned: true });
+  }
+  return list;
 }
 
 function toReservaObj_(r){
@@ -1217,12 +1459,16 @@ function apiCancelarReservaByToken(token, motivo){
   if (!token) return { ok:false, msg:'Token inválido' };
   const lr = SH_RES.getLastRow(); if (lr<2) return {ok:false,msg:'No hay reservas'};
   const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
+  const currentEmail = String(Session.getActiveUser().getEmail()||'').trim().toLowerCase();
+  if (!currentEmail) return {ok:false, msg:'Debes iniciar sesión con tu correo institucional.'};
   for (let i=0;i<rows.length;i++){
     if (rows[i][1]===token){
+      const owner = String(rows[i][9]||'').trim().toLowerCase();
+      if (owner !== currentEmail) return {ok:false,msg:'Solo el solicitante puede cancelar esta reserva.'};
       if (String(rows[i][2]).toUpperCase()==='CANCELADA') return {ok:false,msg:'Ya estaba cancelada'};
       SH_RES.getRange(i+2,3).setValue('CANCELADA');
       SH_RES.getRange(i+2,22).setValue(String(motivo||'Cancelada por el solicitante vía enlace'));
-      SH_RES.getRange(i+2,21).setValue((Session.getActiveUser().getEmail()||'')||'PUBLIC');
+      SH_RES.getRange(i+2,21).setValue(currentEmail || 'PUBLIC');
       SH_RES.getRange(i+2,20).setValue(nowStr_());
       SpreadsheetApp.flush();
       try{ sendEmailCancelacion_(rows[i][0]); }catch(e){}
@@ -1300,7 +1546,7 @@ function sendEmailConfirmacion_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
   const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
-  const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
+  const cancelUrl = addQueryParams_(normalizeExecUrl_(base), { cancel: r.token });
   const subj = `Reserva confirmada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
   const html = emailLayout_({
     title: 'Reserva confirmada',
@@ -1369,7 +1615,7 @@ function sendEmailPendiente_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
   const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
-  const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
+  const cancelUrl = addQueryParams_(normalizeExecUrl_(base), { cancel: r.token });
   const subj = `Reserva pendiente – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
   const disclaimer = '<tr><td style="padding:12px 2px 0 2px;"><div style="padding:12px 16px; border-radius:12px; border:1px solid #fcd34d; background:#fef3c7; color:#92400e; font-weight:600;">Este salón es restringido y requiere aprobación de la administración. Tu reserva aún no está confirmada. Recibirás una notificación cuando se haya evaluado.</div></td></tr>';
   const html = emailLayout_({
@@ -1407,7 +1653,7 @@ function sendEmailAprobacion_(reservaId){
   const r = getReservaById_(reservaId); if (!r) return;
   const adminId = normalizeAdminId_(r.administracion_id||'1');
   const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
-  const cancelUrl = normalizeExecUrl_(base) + `?cancel=${encodeURIComponent(r.token)}`;
+  const cancelUrl = addQueryParams_(normalizeExecUrl_(base), { cancel: r.token });
   const subj = `Reserva aprobada – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
   const html = emailLayout_({
     title: 'Reserva aprobada',
@@ -1461,7 +1707,7 @@ function notifyAdminReservaPendiente_(reservaId){
     title: 'Nueva reserva pendiente de aprobación',
     preheader: `Solicitud registrada para ${r.salon_nombre}.`,
     htmlInner: intro + details + reminder,
-    ctaUrl: adminPanelUrl_(),
+    ctaUrl: adminPanelUrlWithFilters_({ histEstado: 'PENDIENTE' }),
     ctaLabel: 'Abrir panel administrativo',
     footer: 'Gracias por gestionar las solicitudes restringidas.',
     adminId
@@ -1483,8 +1729,7 @@ function notificarConserjeria_(reservaId){
   const to = (cfg_('CONSERJERIA_EMAILS')||'').split(';').map(s=>s.trim()).filter(Boolean).join(',');
   if (!to) return;
   const subj = `Asignación de conserje – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
-  const base = cfg_('PUBLIC_WEBAPP_URL') || ScriptApp.getService().getUrl();
-  const appUrl = normalizeExecUrl_(base);
+  const adminUrl = adminPanelUrlWithFilters_({ histConserje: CON_UNASSIGNED_CODE });
 
   // Contenido enriquecido
   const intro =
@@ -1524,7 +1769,7 @@ function notificarConserjeria_(reservaId){
     title: 'Se requiere asignación de conserje',
     preheader: `Reserva en ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`,
     htmlInner: intro + details + checklist,
-    ctaUrl: appUrl,
+    ctaUrl: adminUrl,
     ctaLabel: 'Asignar conserje ahora',
     footer: 'Gracias por su apoyo logístico.',
     adminId
@@ -1553,8 +1798,12 @@ function apiGetReservaByToken(token){
   if (!token) return { ok:false, msg:'Token inválido' };
   const lr = SH_RES.getLastRow(); if (lr<2) return { ok:false, msg:'No hay reservas' };
   const rows = SH_RES.getRange(2,1,lr-1,24).getValues();
+  const currentEmail = String(Session.getActiveUser().getEmail()||'').trim().toLowerCase();
+  if (!currentEmail) return { ok:false, msg:'Debes iniciar sesión con tu correo institucional.' };
   for (let i=0;i<rows.length;i++){
     if (String(rows[i][1]||'') === token){
+      const owner = String(rows[i][9]||'').trim().toLowerCase();
+      if (owner !== currentEmail) return { ok:false, msg:'Solo el solicitante puede gestionar esta reserva.' };
       return { ok:true, data: toReservaObj_(rows[i]) };
     }
   }
@@ -1583,9 +1832,37 @@ function adminPanelUrl_(){
 
 function normalizeExecUrl_(url){
   let base = String(url||'');
-  if (!/\/exec(\?|$)/.test(base)) base = base.replace(/\/(dev|user|exec)?(\?.*)?$/, '')+'/exec';
-  if (!/[?&]authuser=/.test(base)) base += (base.indexOf('?')===-1?'?':'&')+'authuser=1';
+  if (!/\/exec(\?|$)/.test(base)){
+    base = base.replace(/\/(dev|user|exec)?(\?.*)?$/, '') + '/exec';
+  }
+  if (/[?&]authuser=/.test(base)){
+    return base;
+  }
+  const authUserCfg = String(cfg_('DEFAULT_AUTHUSER_INDEX') || '').trim();
+  if (authUserCfg && /^\d+$/.test(authUserCfg)){
+    base += (base.indexOf('?')===-1 ? '?' : '&') + 'authuser=' + authUserCfg;
+  }
   return base;
+}
+
+function addQueryParams_(url, params){
+  let base = String(url||'');
+  const entries = [];
+  Object.keys(params || {}).forEach(key => {
+    const val = params[key];
+    if (val === undefined || val === null || val === '') return;
+    entries.push(encodeURIComponent(key)+'='+encodeURIComponent(String(val)));
+  });
+  if (!entries.length) return base;
+  if (base.indexOf('?') === -1){
+    return base + '?' + entries.join('&');
+  }
+  const needsAmp = !/[?&]$/.test(base);
+  return base + (needsAmp ? '&' : '') + entries.join('&');
+}
+
+function adminPanelUrlWithFilters_(query){
+  return addQueryParams_(adminPanelUrl_(), query || {});
 }
 
 /** ====== Email branding / layout helpers ====== **/
@@ -1810,7 +2087,7 @@ function job_Diario_7AM_Recordatorios(){
   const appUrl = normalizeExecUrl_(base);
 
   list.forEach(r => {
-    const cancelUrl = appUrl + `?cancel=${encodeURIComponent(r.token)}`;
+    const cancelUrl = addQueryParams_(appUrl, { cancel: r.token });
     const subj = `Recordatorio – ${r.salon_nombre} – ${fmtDMY_(r.fecha)} ${fmt12_(r.hora_inicio)}`;
     const adminId = normalizeAdminId_(r.administracion_id||'1');
     const html = emailLayout_({
