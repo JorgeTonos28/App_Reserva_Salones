@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.8-2025-11-08';
+const APP_VERSION = 'salones-v10.9-2025-11-09';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -2311,7 +2311,6 @@ function apiUpsertUsuario(u){
   if (!rol) return { ok:false, msg:'Rol requerido' };
   if (rol !== 'ADMIN' && rol !== 'SOLICITANTE') return { ok:false, msg:'Rol inválido' };
   if (!prioridadStr.trim() || isNaN(prio)) return { ok:false, msg:'Prioridad requerida' };
-  if (!adminIdRaw) return { ok:false, msg:'Administración requerida' };
   const adminId = normalizeAdminId_(adminIdRaw);
   let prioSalonesInput = '';
   if (Array.isArray(u.prioridad_salones)){
@@ -2324,7 +2323,6 @@ function apiUpsertUsuario(u){
     prioSalonesInput = u.prioridadSalones;
   }
   const prioSalonesList = parsePrioridadSalones_(prioSalonesInput);
-  if (!prioSalonesList.length) return { ok:false, msg:'Debe indicar al menos un salón con prioridad' };
   const prioSalonesRaw = prioSalonesList.join(';');
   const est = String(u.estado||'').toUpperCase().trim();
   if (!est) return { ok:false, msg:'Estado requerido' };

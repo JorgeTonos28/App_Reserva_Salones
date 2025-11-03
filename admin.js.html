@@ -213,7 +213,13 @@ function setDefaultAdminRange(days=30, opts={}){
 
 function drawSalones(arr){
   const el = $('#salones');
-  if (!arr.length){ el.innerHTML='<p>No hay salones configurados.</p>'; return; }
+  if (!el) return;
+  if (!arr.length){
+    el.classList.add('is-empty');
+    el.innerHTML = '';
+    return;
+  }
+  el.classList.remove('is-empty');
   const rows = arr.map(s=>{
     const meta = parseSalonRestrictionMeta(s.restriccion);
     const parts = [];
@@ -223,15 +229,15 @@ function drawSalones(arr){
     const conserjeTxt = String(s.requiere_conserje||'SI').toUpperCase()==='SI' ? 'Sí' : 'No';
     const adminTxt = String(s.administracion_id||'1');
     return `<tr>
-      <td>${s.id}</td><td>${s.nombre}</td><td>${s.capacidad}</td>
-      <td>${restr}</td>
-      <td>${conserjeTxt}</td>
-      <td>${adminTxt}</td>
-      <td>${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
-      <td><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
+      <td data-th="ID">${s.id}</td><td data-th="Salón">${s.nombre}</td><td data-th="Capacidad">${s.capacidad}</td>
+      <td data-th="Restricción">${restr}</td>
+      <td data-th="Conserje">${conserjeTxt}</td>
+      <td data-th="Admin">${adminTxt}</td>
+      <td data-th="Estado">${s.habilitado?'<span class="tag">Habilitado</span>':'<span class="tag" style="background:#fee2e2;color:#991b1b">Deshabilitado</span>'}</td>
+      <td data-th="Acción"><button data-id="${s.id}" data-act="${s.habilitado?'off':'on'}" class="btn-blue">${s.habilitado?'Deshabilitar':'Habilitar'}</button></td>
     </tr>`;
   }).join('');
-  el.innerHTML = `<table class="table-center"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  el.innerHTML = `<table class="table-center salones-table"><thead><tr><th>ID</th><th>Salón</th><th>Capacidad</th><th>Restricción</th><th>Conserje</th><th>Admin</th><th>Estado</th><th>Acción</th></tr></thead><tbody>${rows}</tbody></table>`;
   el.querySelectorAll('button').forEach(b=> b.onclick = ()=> toggleSalon(b.dataset.id, b.dataset.act==='on'));
 }
 
@@ -1157,7 +1163,6 @@ function openUsuariosModal(){
   const prioListEl = document.getElementById('u-prio-salones-list');
   const prioPicker = document.getElementById('u-prio-salones-picker');
   const prioAddBtn = document.getElementById('u-prio-salones-add');
-  const prioErr = document.getElementById('u-prio-salones-error');
   let selected = null; // objeto usuario seleccionado
   const salonDataset = Array.isArray(__SALONES_ALL__) && __SALONES_ALL__.length
     ? __SALONES_ALL__
@@ -1202,9 +1207,6 @@ function openUsuariosModal(){
           return `<span class="chip" data-code="${code}">${label}<button class="chip-remove" type="button" data-remove-code="${code}" aria-label="Quitar ${label}">×</button></span>`;
         }).join('');
       }
-    }
-    if (prioErr){
-      prioErr.hidden = true;
     }
   };
   const populatePriorityPicker = ()=>{
@@ -1260,20 +1262,26 @@ function openUsuariosModal(){
     });
   }
   const draw = (items=[])=>{
-    if (!items.length){ listEl.innerHTML = '<p style="padding:10px">No hay usuarios.</p>'; return; }
+    if (!listEl) return;
+    if (!items.length){
+      listEl.classList.add('is-empty');
+      listEl.innerHTML = '';
+      return;
+    }
     const rows = items.map(u=>`
       <tr class="u-row" data-email="${u.email}">
-        <td>${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
-        <td>${u.departamento||''}</td>
-        <td><span class="tag">${u.rol||''}</span></td>
-        <td>${Number(u.prioridad||0)}</td>
-        <td>${u.prioridad_salones||''}</td>
-        <td>${u.estado||''}</td>
-        <td>${u.extension||''}</td>
-        <td>${u.administracion_id||'1'}</td>
+        <td data-th="Nombre / Correo">${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
+        <td data-th="Departamento">${u.departamento||''}</td>
+        <td data-th="Rol"><span class="tag">${u.rol||''}</span></td>
+        <td data-th="Prioridad">${Number(u.prioridad||0)}</td>
+        <td data-th="Salones con prioridad">${u.prioridad_salones||''}</td>
+        <td data-th="Estado">${u.estado||''}</td>
+        <td data-th="Ext.">${u.extension||''}</td>
+        <td data-th="Admin">${u.administracion_id||'1'}</td>
       </tr>
     `).join('');
-    listEl.innerHTML = `<table><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
+    listEl.classList.remove('is-empty');
+    listEl.innerHTML = `<table class="user-table"><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
     // selección
     listEl.querySelectorAll('.u-row').forEach(tr=>{
       tr.onclick = ()=>{
@@ -1342,14 +1350,9 @@ function openUsuariosModal(){
     if (!payload.rol) return modalMsg('Selecciona un rol.');
     if (payload.prioridad === null) return modalMsg('La prioridad es obligatoria.');
     const codes = getPriorityCodes();
-    if (!codes.length){
-      if (prioErr) prioErr.hidden = false;
-      return modalMsg('Agrega al menos un salón en la prioridad.');
-    }
     payload.prioridad_salones = codes.join(';');
     if (!payload.estado) return modalMsg('Selecciona un estado.');
     if (!payload.extension) return modalMsg('La extensión es obligatoria.');
-    if (!payload.administracion_id) return modalMsg('La administración es obligatoria.');
     // Si hay selección y no hay cambios → no-op
     if (selected &&
         selected.email===payload.email &&

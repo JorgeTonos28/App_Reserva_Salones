@@ -20,14 +20,14 @@
         <button id="btnUsuarios"  class="btn btn-blue btn--sm" type="button" title="Gestionar usuarios" aria-label="Gestionar usuarios">Usuarios</button>
       </div>
     </div>
-    <div id="salones"></div>
+    <div id="salones" class="table-overflow table-overflow--salones" data-empty-text="No hay salones configurados."></div>
   </section>
 
   <!-- Modal Conserjes -->
   <div id="modalCon" class="overlay" hidden>
-    <div class="modal-card" style="max-width:840px; text-align:left;">
+    <div class="modal-card modal-card--md">
       <h3>Conserjes</h3>
-      <div id="con-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
+      <div id="con-list" class="modal-scroll"></div>
       <div class="row g" style="margin-top:6px">
         <input id="con-nombre" placeholder="Nombre"/>
         <input id="con-email" placeholder="Correo"/>
@@ -41,67 +41,70 @@
 
   <!-- Modal Usuarios -->
   <div id="modalUsers" class="overlay" hidden>
-    <div class="modal-card" style="max-width:900px; text-align:left;">
-      <h3>Usuarios</h3>
-      <div id="users-list" style="max-height:46vh; overflow:auto; border:1px solid var(--border); border-radius:10px; margin-bottom:10px;"></div>
-      <small class="muted">Todos los campos son obligatorios.</small>
-      <div class="row g user-form-grid" style="margin-top:8px">
-        <div class="user-field">
-          <label for="u-email">Correo</label>
-          <input id="u-email" type="email" placeholder="usuario@infotep.gob.do" required />
-        </div>
-        <div class="user-field">
-          <label for="u-nombre">Nombre</label>
-          <input id="u-nombre" placeholder="Nombre completo" required />
-        </div>
-        <div class="user-field">
-          <label for="u-dep">Departamento</label>
-          <input id="u-dep" placeholder="Departamento" required />
-        </div>
-        <div class="user-field">
-          <label for="u-rol">Rol</label>
-          <select id="u-rol" required>
-            <option value="">[Rol]</option>
-            <option value="ADMIN">ADMIN</option>
-            <option value="SOLICITANTE">SOLICITANTE</option>
-          </select>
-        </div>
-        <div class="user-field">
-          <label for="u-prio">Prioridad</label>
-          <input id="u-prio" type="number" min="0" placeholder="Ej: 0" required />
-        </div>
-        <div class="user-field user-field--full">
-          <label for="u-prio-salones-picker">Salones con prioridad</label>
-          <div id="u-prio-salones-list" class="chip-list" data-empty-text="No hay salones seleccionados."></div>
-          <div class="chip-actions">
-            <select id="u-prio-salones-picker">
-              <option value="">[Seleccionar salón]</option>
-            </select>
-            <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
+    <div class="modal-card modal-card--lg">
+      <div class="modal-head">
+        <h3>Usuarios</h3>
+      </div>
+      <div class="modal-body">
+        <div id="users-list" class="table-overflow table-overflow--flat is-empty" data-empty-text="No hay usuarios registrados."></div>
+        <small class="muted">Los campos marcados con <span class="required">*</span> son obligatorios.</small>
+        <div class="user-form-grid">
+          <div class="user-field">
+            <label for="u-email">Correo <span class="required">*</span></label>
+            <input id="u-email" type="email" placeholder="usuario@infotep.gob.do" required />
           </div>
-          <small id="u-prio-salones-hint" class="muted">Selecciona los salones para los que aplica la prioridad.</small>
-          <small id="u-prio-salones-error" class="error" hidden>Debes seleccionar al menos un salón.</small>
-          <input id="u-prio-salones" type="hidden" />
-        </div>
-        <div class="user-field">
-          <label for="u-estado">Estado</label>
-          <select id="u-estado" required>
-            <option value="">[Estado]</option>
-            <option value="ACTIVO">ACTIVO</option>
-            <option value="PENDIENTE">PENDIENTE</option>
-            <option value="INACTIVO">INACTIVO</option>
-          </select>
-        </div>
-        <div class="user-field">
-          <label for="u-ext">Extensión</label>
-          <input id="u-ext" placeholder="Ej: 2239" required />
-        </div>
-        <div class="user-field">
-          <label for="u-admin">Administración</label>
-          <input id="u-admin" type="number" min="1" placeholder="Ej: 1" required />
+          <div class="user-field">
+            <label for="u-nombre">Nombre <span class="required">*</span></label>
+            <input id="u-nombre" placeholder="Nombre completo" required />
+          </div>
+          <div class="user-field">
+            <label for="u-dep">Departamento <span class="required">*</span></label>
+            <input id="u-dep" placeholder="Departamento" required />
+          </div>
+          <div class="user-field">
+            <label for="u-rol">Rol <span class="required">*</span></label>
+            <select id="u-rol" required>
+              <option value="">[Rol]</option>
+              <option value="ADMIN">ADMIN</option>
+              <option value="SOLICITANTE">SOLICITANTE</option>
+            </select>
+          </div>
+          <div class="user-field">
+            <label for="u-prio">Prioridad <span class="required">*</span></label>
+            <input id="u-prio" type="number" min="0" placeholder="Ej: 0" required />
+          </div>
+          <div class="user-field user-field--full">
+            <label for="u-prio-salones-picker">Salones con prioridad</label>
+            <div id="u-prio-salones-list" class="chip-list" data-empty-text="Sin salones priorizados (opcional)"></div>
+            <div class="chip-actions">
+              <select id="u-prio-salones-picker">
+                <option value="">[Seleccionar salón]</option>
+              </select>
+              <button id="u-prio-salones-add" class="btn btn-blue btn--sm" type="button">Agregar</button>
+            </div>
+            <small id="u-prio-salones-hint" class="muted">Déjalo vacío si la prioridad aplica para todos los salones.</small>
+            <input id="u-prio-salones" type="hidden" />
+          </div>
+          <div class="user-field">
+            <label for="u-estado">Estado <span class="required">*</span></label>
+            <select id="u-estado" required>
+              <option value="">[Estado]</option>
+              <option value="ACTIVO">ACTIVO</option>
+              <option value="PENDIENTE">PENDIENTE</option>
+              <option value="INACTIVO">INACTIVO</option>
+            </select>
+          </div>
+          <div class="user-field">
+            <label for="u-ext">Extensión <span class="required">*</span></label>
+            <input id="u-ext" placeholder="Ej: 2239" required />
+          </div>
+          <div class="user-field">
+            <label for="u-admin">Administración</label>
+            <input id="u-admin" type="number" min="1" placeholder="Ej: 1" />
+          </div>
         </div>
       </div>
-      <div class="row g" style="margin-top:8px">
+      <div class="modal-footer">
         <button id="u-save"  class="btn btn-blue btn--sm">Guardar</button>
         <button id="u-close" class="btn btn-blue btn--sm" type="button">Cerrar</button>
       </div>
