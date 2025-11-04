@@ -53,17 +53,17 @@
     </div>
     <!-- Sección 1: Selección principal -->
     <div class="section">
-    <div class="section-head">
-      <div class="section-title">Selección</div>
-      <div class="actions-inline">
-        <button id="btnResetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
-          <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
-        </button>
-        <button id="btnRefreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
-          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-        </button>
+      <div class="section-head">
+        <div class="section-title">Selección</div>
+        <div class="actions-inline">
+          <button id="btnResetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
+            <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
+          </button>
+          <button id="btnRefreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+            <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
-    </div>
       <div class="form-grid">
         <div class="form-item">
           <label for="fecha">Fecha</label>
@@ -189,7 +189,7 @@
   <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
     <footer class="site-footer">
       <? if (footerSignature.url) { ?>
-        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+        <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
       <? } ?>
       <? if (footerSignature.credits) { ?>
         <div class="site-footer__credits"><?= footerSignature.credits ?></div>

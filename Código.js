@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.13-2025-11-13';
+const APP_VERSION = 'salones-v10.3-2025-11-13';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -2346,12 +2346,27 @@ function getLogoDataUrl(size){
   const id = getLogoFileId_();
   if (!id) return '';
 
-  const blob = getDriveThumbnailBlob_(id, S*3);
-  if (!blob) return '';
+  // 1) Obtén un blob del archivo (thumbnail si hay, o archivo directo)
+  let blob = getDriveThumbnailBlob_(id, S*3); // suele venir chico
+  if (!blob) { try { blob = DriveApp.getFileById(id).getBlob(); } catch(e) { blob = null; } }
+  if (!blob) return '';;
+
+  // 2) REDUCE TAMAÑO: abre en ImagesService y redimensiona al ancho S
+  try {
+    const img = ImagesService.openBlob(blob);
+    // resize al ancho deseado, mantiene proporción
+    const resized = img.resize(S, 0).getBlob();
+    // Si el PNG original trae mucha compresión ineficiente, puedes convertir a JPEG:
+    // const resized = img.resize(S, 0).getBlob().setContentTypeFromExtension('jpg');
+    blob = resized;
+  } catch(e) {
+    // si fallara el resize, seguimos con el blob original
+  }
 
   const mime = blob.getContentType() || 'image/png';
   const b64 = Utilities.base64Encode(blob.getBytes());
   const dataUrl = 'data:'+mime+';base64,'+b64;
+  // Cachea por 6h; el dataURL ahora debería ser << 200 KB
   cache.put(key, dataUrl, 6*60*60);
   return dataUrl;
 }
@@ -2387,7 +2402,7 @@ function getLogoUrl(){
 }
 
 function getSignatureDataUrl(size){
-  const S = Math.max(48, Number(size)||160);
+  const S = Math.max(48, Number(size)||180);
   const cache = CacheService.getScriptCache();
   const key = 'SIGNATURE_DATA_URL_'+S;
   const cached = cache.get(key);
@@ -2418,7 +2433,12 @@ function getSignatureFileId_(){
 
 function getSignatureUrl(){
   const explicit = cfg_('FOOTER_SIGNATURE_URL') || cfg_('FOOTER_SIGNATURE_UR');
-  if (explicit) return explicit;
+  if (explicit) {
+    // Normaliza cualquier URL de Drive (file/d/<ID>/view?..., open?id=ID, etc.) a uc?export=view&id=ID
+    const m = String(explicit).match(/(?:\/d\/|id=)([a-zA-Z0-9_-]+)/);
+    if (m && m[1]) return 'https://drive.google.com/uc?export=view&id=' + m[1];
+    return explicit; // si no es de Drive, devuélvelo tal cual
+  }
   const cfgId = cfg_('FOOTER_SIGNATURE_FILE_ID');
   if (cfgId){
     try {
@@ -3141,3 +3161,99 @@ function dbg_CheckCreate(fechaStr, salonId, horaInicio, duracionMin){
   };
 }
 
+/**
+ * SELF TEST firma de footer
+ * Ejecuta esta función desde el editor y revisa View > Logs
+ */
+function __sigSelfTest() {
+  const out = [];
+  function log(k, v) { out.push(`${k}: ${v}`); }
+
+  // 1) Lee variables de Config (ajusta cfg_ si usas otra)
+  const rawUrl = (cfg_('FOOTER_SIGNATURE_URL') || cfg_('FOOTER_SIGNATURE_UR') || '').trim();
+  const rawId  = (cfg_('FOOTER_SIGNATURE_FILE_ID') || '').trim();
+  log('FOOTER_SIGNATURE_URL/UR', rawUrl || '(vacío)');
+  log('FOOTER_SIGNATURE_FILE_ID', rawId || '(vacío)');
+
+  // 2) Normaliza URL si es de Drive
+  let normUrl = rawUrl;
+  const m = rawUrl.match(/(?:\/d\/|id=)([a-zA-Z0-9_-]+)/);
+  if (m && m[1]) normUrl = 'https://drive.google.com/uc?export=view&id=' + m[1];
+  log('URL normalizada', normUrl || '(no aplica)');
+
+  // 3) Determina fileId final
+  const id = rawId || (m && m[1]) || '';
+  log('fileId resuelto', id || '(no hay id)');
+
+  // 4) Inspección Drive
+  if (id) {
+    try {
+      const f = DriveApp.getFileById(id);
+      log('Drive.nombre', f.getName());
+      log('Drive.mime', f.getMimeType());
+      log('Drive.tamaño(bytes)', f.getSize());
+      log('Drive.enPapelera', f.isTrashed());
+      log('Drive.enlaceCompartir', f.getUrl());
+    } catch(e) {
+      log('Drive.getFileById ERROR', e.message);
+    }
+  }
+
+  // 5) Mini-thumbnail con API avanzada (si está habilitada)
+  let thumbOk = false;
+  try {
+    if (id && typeof Drive !== 'undefined' && Drive.Files) {
+      const file = Drive.Files.get(id, {fields: 'thumbnailLink'});
+      log('DriveAPI.thumbnailLink', (file && file.thumbnailLink) ? file.thumbnailLink : '(sin thumbnail)');
+      thumbOk = !!(file && file.thumbnailLink);
+    } else {
+      log('DriveAPI', 'NO disponible (servicio avanzado deshabilitado)');
+    }
+  } catch(e) {
+    log('DriveAPI ERROR', e.message);
+  }
+
+  // 6) Construcción de dataURL (fallback sin API avanzada)
+  let dataUrl = '';
+  if (id) {
+    try {
+      // a) intenta con thumbnail vía API avanzada (si hay)
+      let blob = null;
+      if (thumbOk) {
+        try {
+          const t = Drive.Files.get(id, {fields: 'thumbnailLink'});
+          // truco: descarga el thumbnail mediante Alt=media NO es posible aquí sin UrlFetch,
+          // así que nos vamos a fallback directo.
+        } catch(e){}
+      }
+      // b) Fallback: blob directo del archivo
+      try { 
+        const f = DriveApp.getFileById(id);
+        blob = f.getBlob();
+      } catch(e) { log('getBlob ERROR', e.message); }
+
+      if (blob) {
+        const mime = blob.getContentType() || 'image/png';
+        dataUrl = 'data:' + mime + ';base64,' + Utilities.base64Encode(blob.getBytes());
+        log('dataURL.length', String(dataUrl.length));
+        // Guarda un PNG temporal para inspección manual (en tu Drive)
+        try {
+          DriveApp.createFile(Utilities.newBlob(blob.getBytes(), mime, 'DEBUG_signature_copy'));
+          log('Copia temporal', 'creada en tu Drive (DEBUG_signature_copy)');
+        } catch(e) {
+          log('Crear copia temporal ERROR', e.message);
+        }
+      } else {
+        log('blob', '(no se obtuvo blob)');
+      }
+    } catch(e) {
+      log('dataURL ERROR', e.message);
+    }
+  }
+
+  // 7) Resultado que usaría el template
+  const choose = dataUrl || normUrl;
+  log('Fuente que usaría <img>', choose ? (choose.startsWith('data:') ? 'DATA-URL' : choose) : '(ninguna)');
+
+  Logger.log(out.join('\n'));
+}

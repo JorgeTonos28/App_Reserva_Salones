@@ -134,34 +134,38 @@
         </div>
       </div>
     </div>
-    <div class="form-grid">
-      <div class="form-item">
-        <label for="a-fecha">Fecha</label>
-        <input id="a-fecha" type="date" />
-      </div>
-      <div class="form-item">
-        <label for="a-salon">Salón</label>
-        <select id="a-salon"></select>
-        <div id="a-restriccionHint" class="notice notice--warning" hidden></div>
-        <div id="a-aprobacionHint" class="notice notice--info" hidden></div>
-      </div>
-      <div class="form-item">
-        <label for="a-dur">Duración</label>
-        <select id="a-dur"></select>
-      </div>
-      <div class="form-item">
-        <div class="label-row">
-          <label for="a-hora">Hora</label>
-          <div class="label-actions">
-            <button id="a-resetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
-              <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
-            </button>
-            <button id="a-refreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
-              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-            </button>
-          </div>
+    <!-- Sección 1: Selección principal -->
+    <div class="section">
+      <div class="section-head">
+        <div class="section-title">Selección</div>
+        <div class="actions-inline">
+          <button id="a-resetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
+            <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
+          </button>
+          <button id="a-refreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+            <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+          </button>
         </div>
-        <select id="a-hora"></select>
+      </div>
+      <div class="form-grid">
+        <div class="form-item">
+          <label for="a-fecha">Fecha</label>
+          <input id="a-fecha" type="date" />
+        </div>
+        <div class="form-item">
+          <label for="a-salon">Salón</label>
+          <select id="a-salon"></select>
+          <div id="a-restriccionHint" class="notice notice--warning" hidden></div>
+          <div id="a-aprobacionHint" class="notice notice--info" hidden></div>
+        </div>
+        <div class="form-item">
+          <label for="a-dur">Duración</label>
+          <select id="a-dur"></select>
+        </div>
+        <div class="form-item">
+          <label for="a-hora">Hora</label>
+          <select id="a-hora"></select>
+        </div>
       </div>
     </div>
     <div class="section">
@@ -299,7 +303,7 @@
   <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
     <footer class="site-footer">
       <? if (footerSignature.url) { ?>
-        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+        <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
       <? } ?>
       <? if (footerSignature.credits) { ?>
         <div class="site-footer__credits"><?= footerSignature.credits ?></div>
