@@ -117,6 +117,17 @@
     </div>
   </div>
 
+  <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
+    <footer class="site-footer">
+      <? if (footerSignature.url) { ?>
+        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+      <? } ?>
+      <? if (footerSignature.credits) { ?>
+        <div class="site-footer__credits"><?= footerSignature.credits ?></div>
+      <? } ?>
+    </footer>
+  <? } ?>
+
   <script>
     const $ = s => document.querySelector(s);
     const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{

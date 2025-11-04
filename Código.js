@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.11-2025-11-10';
+const APP_VERSION = 'salones-v10.12-2025-11-11';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -377,6 +377,27 @@ function findUserByEmail_(email){
   };
 }
 
+function ensureHostUsuarioDesdeReserva_(host, actorEmail){
+  if (!host || !SH_USR) return { created:false };
+  const email = String(host.email || '').trim().toLowerCase();
+  if (!email) return { created:false };
+  const actor = String(actorEmail || '').trim().toLowerCase();
+  if (email === actor) return { created:false, skipped:true };
+  const existing = findUserByEmail_(email);
+  if (existing) return { created:false, exists:true };
+
+  const nombre = String(host.nombre || '').trim();
+  const departamento = String(host.departamento || '').trim();
+  const extension = String(host.extension || '').trim();
+
+  SH_USR.appendRow([email, nombre, departamento, 'SOLICITANTE', 0, '', 'PENDIENTE', extension, '']);
+  SpreadsheetApp.flush();
+  try {
+    notifyGeneralAdminsUsuarioPendiente_({ email, nombre, departamento, extension }, actorEmail);
+  } catch(e){}
+  return { created:true };
+}
+
 function parsePrioridadSalones_(raw){
   const text = String(raw||'').trim();
   if (!text) return [];
@@ -469,6 +490,7 @@ function adminPresetFromParams_(params){
 function doGet(e){
   const me = (Session.getActiveUser().getEmail()||'').toLowerCase();
   const u  = getUser_();
+  const footerSignature = footerSignatureContext_();
 
   // 1) Flujo de cancelación por link: ?cancel=TOKEN
   const cancelToken = (e && e.parameter && e.parameter.cancel) || '';
@@ -476,6 +498,7 @@ function doGet(e){
     const t = HtmlService.createTemplateFromFile('Cancel');
     t.logoUrl = getLogoDataUrl(128) || getLogoUrl();
     t.cancelToken = cancelToken;
+    t.footerSignature = footerSignature;
     return t.evaluate()
       .setTitle('Cancelar reserva')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -504,6 +527,7 @@ function doGet(e){
     t.isInactive = false;
     t.noRole     = false;
     t.noState    = false;
+    t.footerSignature = footerSignature;
     return t.evaluate()
       .setTitle('Acceso denegado – Reserva de Salones')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -529,6 +553,7 @@ function doGet(e){
     t.isInactive = (estado === 'INACTIVO');
     t.noRole     = false;
     t.noState    = (estado === '');   // << sin estado asignado
+    t.footerSignature = footerSignature;
     return t.evaluate()
       .setTitle('Acceso denegado – Reserva de Salones')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -547,6 +572,7 @@ function doGet(e){
     t.me = u;
     t.initialFilters = adminPresetFromParams_(e && e.parameter);
     t.conserjeUnassignedCode = CON_UNASSIGNED_CODE;
+    t.footerSignature = footerSignature;
     return t.evaluate()
       .setTitle('Reserva de Salones – Admin')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -569,6 +595,7 @@ function doGet(e){
       DUR_MAX:  Number(cfg_('DURATION_MAX')  || 240),
       DUR_STEP: Number(cfg_('DURATION_STEP') || 30)
     };
+    t.footerSignature = footerSignature;
     return t.evaluate()
       .setTitle('Reserva de Salones')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -592,6 +619,7 @@ function doGet(e){
   t.isInactive = false;
   t.noRole     = true;
   t.noState    = false;
+  t.footerSignature = footerSignature;
   return t.evaluate()
     .setTitle('Acceso denegado – Reserva de Salones')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -1098,6 +1126,20 @@ function apiCrearReserva(payload){
       String(payload.extension||''), String(payload.evento_nombre||''), String(payload.publico_tipo||''),
       prioSolic, conserjeReq, 'NO', ts, ts, '', '', '', adminId
     ]);
+
+    const hostEsSesion = (Object.prototype.hasOwnProperty.call(payload || {}, 'host_es_sesion'))
+      ? !!payload.host_es_sesion
+      : (String(emailUso||'').toLowerCase() === String(me.email||'').toLowerCase());
+    if (!hostEsSesion && String(emailUso||'').toLowerCase() !== String(me.email||'').toLowerCase()){
+      try {
+        ensureHostUsuarioDesdeReserva_({
+          email: emailUso,
+          nombre: String(payload.nombre || ''),
+          departamento: String(payload.departamento || ''),
+          extension: String(payload.extension || '')
+        }, me.email);
+      } catch(e){}
+    }
 
     if (restrSalon.requiresApproval){
       try{ sendEmailPendiente_(id); }catch(e){}
@@ -2343,7 +2385,115 @@ function getLogoUrl(){
   return '';
 }
 
+function getSignatureDataUrl(size){
+  const S = Math.max(48, Number(size)||160);
+  const cache = CacheService.getScriptCache();
+  const key = 'SIGNATURE_DATA_URL_'+S;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const id = getSignatureFileId_();
+  if (!id) return '';
+
+  const blob = getDriveThumbnailBlob_(id, S*3);
+  if (!blob) return '';
+
+  const mime = blob.getContentType() || 'image/png';
+  const b64 = Utilities.base64Encode(blob.getBytes());
+  const dataUrl = 'data:'+mime+';base64,'+b64;
+  cache.put(key, dataUrl, 6*60*60);
+  return dataUrl;
+}
+
+function getSignatureFileId_(){
+  let id = cfg_('FOOTER_SIGNATURE_FILE_ID');
+  if (!id){
+    const url = getSignatureUrl();
+    const match = url && url.match(/id=([a-zA-Z0-9_-]+)/);
+    id = match ? match[1] : '';
+  }
+  return id || '';
+}
+
+function getSignatureUrl(){
+  const explicit = cfg_('FOOTER_SIGNATURE_URL');
+  if (explicit) return explicit;
+  const cfgId = cfg_('FOOTER_SIGNATURE_FILE_ID');
+  if (cfgId){
+    try {
+      const f = DriveApp.getFileById(cfgId);
+      return 'https://drive.google.com/uc?export=view&id='+f.getId();
+    } catch(e){}
+  }
+  try {
+    const files = DriveApp.searchFiles("(title contains 'firma' or title contains 'signature') and mimeType contains 'image/' and trashed = false");
+    if (files.hasNext()){
+      const f = files.next();
+      return 'https://drive.google.com/uc?export=view&id='+f.getId();
+    }
+  } catch(e){}
+  return '';
+}
+
+function footerSignatureContext_(){
+  const width = Math.max(40, Number(cfg_('FOOTER_SIGNATURE_WIDTH') || 180));
+  const url = getSignatureDataUrl(width) || getSignatureUrl();
+  const creditsRaw = cfg_('FOOTER_CREDITS_TEXT');
+  const credits = creditsRaw ? creditsRaw : 'Dirección de Innovación - INFOTEP';
+  return { url, width, credits };
+}
+
 // ========= Usuarios (Admin CRUD) =========
+function apiBuscarAnfitriones(query){
+  const me = getUser_();
+  if (!me || !me.email) return { ok:false, msg:'No autenticado' };
+  if (String(me.estado||'').toUpperCase() !== 'ACTIVO') return { ok:false, msg:'No autorizado' };
+  const text = String(query || '').trim();
+  if (!text) return { ok:true, data:[] };
+  const tokens = text.split(/\s+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (!tokens.length) return { ok:true, data:[] };
+  const lr = SH_USR.getLastRow();
+  if (lr < 2) return { ok:true, data:[] };
+  const rows = SH_USR.getRange(2,1,lr-1,9).getValues();
+  const results = [];
+  const seen = {};
+  for (let i=0;i<rows.length;i++){
+    const r = rows[i];
+    const email = String(r[0]||'').trim().toLowerCase();
+    if (!email || seen[email]) continue;
+    const nombre = String(r[1]||'').trim();
+    const departamento = String(r[2]||'').trim();
+    const rol = String(r[3]||'').trim().toUpperCase();
+    const estado = String(r[6]||'').trim().toUpperCase();
+    const extension = String(r[7]||'').trim();
+    const hayNombre = nombre.toLowerCase();
+    const hayDepto = departamento.toLowerCase();
+    const matches = tokens.every(tok => {
+      return hayNombre.indexOf(tok) >= 0 || email.indexOf(tok) >= 0 || hayDepto.indexOf(tok) >= 0;
+    });
+    if (!matches) continue;
+    seen[email] = true;
+    results.push({ email, nombre, departamento, rol, estado, extension });
+  }
+  const estadoRank = estado => {
+    const up = String(estado||'').toUpperCase();
+    if (up === 'ACTIVO') return 0;
+    if (up === 'PENDIENTE') return 1;
+    return 2;
+  };
+  results.sort((a,b)=>{
+    const diff = estadoRank(a.estado) - estadoRank(b.estado);
+    if (diff !== 0) return diff;
+    const nameA = (a.nombre || a.email || '').toLowerCase();
+    const nameB = (b.nombre || b.email || '').toLowerCase();
+    if (nameA < nameB) return -1;
+    if (nameA > nameB) return 1;
+    return 0;
+  });
+  const limit = 12;
+  return { ok:true, data: results.slice(0, limit) };
+}
+
 function apiListUsuarios(){
   const me = getUser_();
   if (!isGeneralAdminUser_(me)) return { ok:false, msg:'No autorizado' };
@@ -2506,6 +2656,53 @@ function notifyUsuarioActivado_(user){
   MailApp.sendEmail({
     to: user.email,
     subject: 'Tu usuario en Reserva de Salones fue activado',
+    htmlBody: html,
+    name: brand.brandName,
+    replyTo: brand.replyTo
+  });
+}
+
+function notifyGeneralAdminsUsuarioPendiente_(user, actorEmail){
+  if (!user || !user.email) return;
+  const adminId = '1';
+  const rawList = (
+    cfgForAdmin_(adminId, 'ADMIN_EMAILS')
+    || cfg_('ADMIN_EMAILS')
+    || ''
+  );
+  const toList = rawList.split(';').map(s => s.trim()).filter(Boolean);
+  if (!toList.length) return;
+
+  const brand = mailCfg_(adminId);
+  const actor = String(actorEmail || '').trim();
+  const intro = emailParagraph_('Hola equipo de administración general,')
+    + emailParagraph_('Se registró un nuevo anfitrión desde el formulario de reservas y quedó pendiente de activación.');
+  const detailPairs = [
+    ['Nombre', user.nombre || '(sin nombre)'],
+    ['Correo', user.email],
+    ['Departamento', user.departamento || '—'],
+    ['Extensión', user.extension || '—'],
+    ['Estado inicial', 'PENDIENTE'],
+    ['Rol sugerido', 'SOLICITANTE']
+  ];
+  if (actor){
+    detailPairs.push(['Registrado por', actor]);
+  }
+  const details = emailDetailsRows_(detailPairs);
+  const reminder = emailParagraph_('Activa el usuario desde la sección <b>Usuarios</b> del panel administrativo general.');
+  const html = emailLayout_({
+    adminId,
+    title: 'Nuevo usuario pendiente de activación',
+    preheader: `Pendiente: ${user.nombre || user.email}`,
+    htmlInner: intro + details + reminder,
+    ctaUrl: adminPanelUrl_(),
+    ctaLabel: 'Abrir panel administrativo',
+    footer: 'Activa el usuario desde la sección Usuarios para habilitarlo.'
+  });
+  const subject = `Usuario pendiente de activación – ${user.nombre || user.email}`;
+  MailApp.sendEmail({
+    to: toList.join(','),
+    subject,
     htmlBody: html,
     name: brand.brandName,
     replyTo: brand.replyTo

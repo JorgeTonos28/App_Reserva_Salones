@@ -40,6 +40,7 @@ const DEFAULT_DUR_CFG_PUBLIC = {
   max: Number(window.__DUR_MAX__ || 240),
   step: Number(window.__DUR_STEP__ || 30)
 };
+let __HOST_FORM_CTRL__ = null;
 
 function escHtml(str){
   return String(str || '').replace(/[&<>"']/g, ch => ({
@@ -152,6 +153,188 @@ function updateSalonHint(){
     }
   }
   hint.textContent = pieces.join(' ');
+}
+
+function createHostFormController(opts){
+  const fields = opts.fields || {};
+  const errors = opts.errorHints || {};
+  const listEl = opts.listEl || null;
+  const meData = opts.me || {};
+  const state = {
+    isSession: true,
+    results: [],
+    timer: 0,
+    pending: '',
+    selected: null,
+    enabled: false
+  };
+  const minQueryLen = 2;
+
+  function hideErrors(){
+    if (errors.email) errors.email.hidden = true;
+    if (errors.ext) errors.ext.hidden = true;
+    if (fields.ext) fields.ext.classList.remove('input-error');
+  }
+
+  function fillFromSession(){
+    if (fields.nombre) fields.nombre.value = (meData.nombre || '').trim();
+    if (fields.email) fields.email.value = (meData.email || '').trim();
+    if (fields.dep) fields.dep.value = (meData.departamento || '').trim();
+    if (fields.ext) fields.ext.value = String(meData.extension || '');
+    hideErrors();
+  }
+
+  function clearFields(){
+    if (fields.nombre) fields.nombre.value = '';
+    if (fields.email) fields.email.value = '';
+    if (fields.dep) fields.dep.value = '';
+    if (fields.ext) fields.ext.value = '';
+    hideErrors();
+  }
+
+  function hideSuggestions(){
+    if (listEl){
+      listEl.innerHTML = '';
+      listEl.hidden = true;
+    }
+  }
+
+  function render(list){
+    if (!listEl) return;
+    if (!list || !list.length){
+      listEl.innerHTML = '<div class="host-suggestions__empty">Sin coincidencias</div>';
+      listEl.hidden = false;
+      return;
+    }
+    const items = list.map((item, idx) => `
+      <button type="button" class="host-suggestion" data-index="${idx}" role="option">
+        <span class="host-suggestion__name">${escHtml(item.nombre || item.email || '(sin nombre)')}</span>
+        <span class="host-suggestion__email">${escHtml(item.email || '')}</span>
+        <span class="host-suggestion__dept">${escHtml(item.departamento || 'Sin departamento')}</span>
+      </button>
+    `).join('');
+    listEl.innerHTML = items;
+    listEl.hidden = false;
+  }
+
+  function applySelection(item){
+    if (!item) return;
+    if (fields.nombre) fields.nombre.value = item.nombre || item.email || '';
+    if (fields.email) fields.email.value = item.email || '';
+    if (fields.dep) fields.dep.value = item.departamento || '';
+    if (fields.ext) fields.ext.value = item.extension || '';
+    state.selected = item;
+    hideErrors();
+    hideSuggestions();
+  }
+
+  function fetch(query){
+    state.pending = query;
+    google.script.run
+      .withSuccessHandler(res => {
+        if (state.pending !== query) return;
+        const arr = (res && res.ok && Array.isArray(res.data)) ? res.data : [];
+        state.results = arr;
+        render(arr);
+      })
+      .withFailureHandler(() => {
+        if (state.pending !== query) return;
+        state.results = [];
+        render([]);
+      })
+      .apiBuscarAnfitriones(query);
+  }
+
+  function schedule(query){
+    clearTimeout(state.timer);
+    if (!state.enabled){
+      hideSuggestions();
+      return;
+    }
+    const normalized = String(query || '');
+    if (!normalized || normalized.replace(/\s+/g,'').length < minQueryLen){
+      hideSuggestions();
+      state.results = [];
+      return;
+    }
+    state.timer = setTimeout(()=> fetch(normalized), 220);
+  }
+
+  function setPressed(yes){
+    const btnYes = opts.toggleYes;
+    const btnNo = opts.toggleNo;
+    if (!btnYes || !btnNo) return;
+    btnYes.setAttribute('aria-pressed', yes ? 'true' : 'false');
+    btnNo.setAttribute('aria-pressed', yes ? 'false' : 'true');
+  }
+
+  function setSessionMode(flag){
+    state.isSession = !!flag;
+    if (state.isSession){
+      state.enabled = false;
+      state.selected = null;
+      hideSuggestions();
+      fillFromSession();
+    } else {
+      state.enabled = true;
+      state.selected = null;
+      clearFields();
+      if (fields.nombre) fields.nombre.focus();
+    }
+    setPressed(state.isSession);
+  }
+
+  function handleNombreInput(){
+    if (state.isSession) return;
+    const value = (fields.nombre && fields.nombre.value || '').trim();
+    schedule(value);
+  }
+
+  if (opts.toggleYes) opts.toggleYes.onclick = () => setSessionMode(true);
+  if (opts.toggleNo) opts.toggleNo.onclick = () => setSessionMode(false);
+
+  const nombreEl = fields.nombre;
+  if (nombreEl){
+    nombreEl.addEventListener('input', ()=>{ state.selected = null; handleNombreInput(); });
+    nombreEl.addEventListener('focus', ()=>{
+      if (!state.isSession && state.results.length && listEl){
+        listEl.hidden = false;
+      }
+    });
+  }
+  if (fields.email) fields.email.addEventListener('input', ()=>{ state.selected = null; });
+  if (fields.dep) fields.dep.addEventListener('input', ()=>{ state.selected = null; });
+  if (fields.ext) fields.ext.addEventListener('input', ()=>{ state.selected = null; });
+
+  if (listEl){
+    listEl.addEventListener('click', ev => {
+      const btn = ev.target.closest('.host-suggestion');
+      if (!btn) return;
+      ev.preventDefault();
+      const idx = Number(btn.getAttribute('data-index'));
+      const item = state.results[idx];
+      if (item) applySelection(item);
+    });
+  }
+
+  document.addEventListener('click', ev => {
+    if (!listEl || listEl.hidden) return;
+    const target = ev.target;
+    if ((listEl.contains && listEl.contains(target)) || (nombreEl && nombreEl === target)){
+      return;
+    }
+    hideSuggestions();
+  });
+
+  setSessionMode(true);
+
+  return {
+    isSessionHost(){ return state.isSession; },
+    selectedHost(){ return state.selected; },
+    reset(){ setSessionMode(true); },
+    manual(){ setSessionMode(false); },
+    hideSuggestions
+  };
 }
 
 /* Overlay */
@@ -518,6 +701,15 @@ function reservar(){
     evento_nombre: $('#evento').value.trim(),
     publico_tipo: $('#publico').value
   };
+  if (__HOST_FORM_CTRL__){
+    p.host_es_sesion = __HOST_FORM_CTRL__.isSessionHost();
+    const selectedHost = __HOST_FORM_CTRL__.selectedHost && __HOST_FORM_CTRL__.selectedHost();
+    if (!p.host_es_sesion && selectedHost && selectedHost.email){
+      p.host_lookup_email = selectedHost.email;
+    }
+  } else {
+    p.host_es_sesion = true;
+  }
   if (!p.salon_id || !p.fecha || !p.hora_inicio || !p.duracion_min ||
       !p.nombre || !p.email || !p.departamento || !p.extension || !p.cant_personas || !p.evento_nombre){
     return modal('Completa todos los campos obligatorios.');
@@ -619,10 +811,15 @@ function resetReservaForm(){
   if (apprHint){ apprHint.hidden = true; apprHint.textContent = ''; }
 
   // Datos del solicitante
-  const nombre = $('#nombre');        if (nombre) nombre.value = '';
-  const depto  = $('#depto');         if (depto)  depto.value  = '';
-  const ext    = $('#ext');           if (ext){ ext.value=''; ext.classList.remove('input-error'); }
-  const extErr = $('#extError');      if (extErr) extErr.hidden = true;
+  if (__HOST_FORM_CTRL__){
+    __HOST_FORM_CTRL__.reset();
+  } else {
+    const nombre = $('#nombre');        if (nombre) nombre.value = '';
+    const depto  = $('#depto');         if (depto)  depto.value  = '';
+    const ext    = $('#ext');           if (ext){ ext.value=''; ext.classList.remove('input-error'); }
+    const extErr = $('#extError');      if (extErr) extErr.hidden = true;
+    const emailErr = $('#emailError');  if (emailErr) emailErr.hidden = true;
+  }
   const cant   = $('#cant');          if (cant)   cant.value   = '';
 
   // Detalles del evento
@@ -786,38 +983,22 @@ function init(){
   const d = String(today.getDate()).padStart(2,'0');
   const ym = String(m).padStart(2,'0');
 
-  // ===== Toggle anfitrión (por defecto: “Sí” → autollenar con BD de sesión) =====
-  (function(){
-    const btnYes = document.getElementById('hostYes');
-    const btnNo  = document.getElementById('hostNo');
-    const fields = {
+  __HOST_FORM_CTRL__ = createHostFormController({
+    toggleYes: document.getElementById('hostYes'),
+    toggleNo: document.getElementById('hostNo'),
+    fields: {
       nombre: document.getElementById('nombre'),
       email:  document.getElementById('email'),
       dep:    document.getElementById('depto'),
-      ext:    document.getElementById('ext'),
-    };
-    function fillFromME(){
-      if (fields.nombre) fields.nombre.value = (ME.nombre||'').trim();
-      if (fields.email)  fields.email.value  = (ME.email||'').trim();
-      if (fields.dep)    fields.dep.value    = (ME.departamento||'').trim();
-      if (fields.ext)    fields.ext.value    = (ME.extension||'');
-    }
-    function clearHost(){
-      Object.values(fields).forEach(el=>{ if (el) el.value=''; });
-      const eHint = document.getElementById('emailError'); if (eHint) eHint.hidden = true;
-      const xHint = document.getElementById('extError');   if (xHint) xHint.hidden = true;
-    }
-    function setPressed(yes){
-      btnYes.setAttribute('aria-pressed', yes?'true':'false');
-      btnNo.setAttribute('aria-pressed',  yes?'false':'true');
-    }
-    if (btnYes && btnNo){
-      btnYes.onclick = ()=>{ setPressed(true); fillFromME(); };
-      btnNo.onclick  = ()=>{ setPressed(false); clearHost(); };
-      // default: sí
-      setPressed(true); fillFromME();
-    }
-  })();
+      ext:    document.getElementById('ext')
+    },
+    errorHints: {
+      email: document.getElementById('emailError'),
+      ext:   document.getElementById('extError')
+    },
+    listEl: document.getElementById('hostSuggestions'),
+    me: ME
+  });
 
   // ===== Validación de dominio en email (@infotep.gob.do) =====
   (function(){
@@ -900,6 +1081,13 @@ function init(){
   $('#hora').onchange     = verifySelectedSlot;
   $('#cant').addEventListener('input', validateCapacityHint);
   $('#selSalon').addEventListener('change', validateCapacityHint);
+  const btnResetForm = document.getElementById('btnResetForm');
+  if (btnResetForm){
+    btnResetForm.addEventListener('click', ()=>{
+      resetReservaForm();
+      scheduleRefreshSlots();
+    });
+  }
 
   // Extensión: mostrar hint SOLO cuando el usuario intenta teclear algo no numérico
   const ext = $('#ext'), extErr = $('#extError');

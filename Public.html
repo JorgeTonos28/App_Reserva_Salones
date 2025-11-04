@@ -52,15 +52,22 @@
     </div>
     <!-- Sección 1: Selección principal -->
     <div class="section">
-      <div class="section-head">
-        <div class="section-title">Selección</div>
-        <button id="btnRefreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
-          <!-- Flecha en SVG para nitidez -->
+    <div class="section-head">
+      <div class="section-title">Selección</div>
+      <div class="actions-inline">
+        <button id="btnResetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path d="M12 5v2.5a.75.75 0 0 0 1.28.53l3.97-3.97a.75.75 0 0 0 0-1.06L13.28-.03A.75.75 0 0 0 12 .5V3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7z" fill="currentColor"/>
+            <path d="M3.707 16.293 13.293 6.707a1 1 0 0 1 1.414 0l5.586 5.586a1 1 0 0 1 0 1.414l-6.172 6.172H6.121a1 1 0 0 1-.707-.293l-1.707-1.707a1 1 0 0 1 0-1.414Z" fill="currentColor"/>
+            <path d="M9 20h6v1H9z" fill="currentColor"/>
+          </svg>
+        </button>
+        <button id="btnRefreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M17.657 6.343a7 7 0 0 0-11.938 3.316H3.75a.75.75 0 0 0 0 1.5h3.5a.75.75 0 0 0 .75-.75V6.91a.75.75 0 0 0-1.5 0v1.237A5.5 5.5 0 1 1 6.1 17.9a.75.75 0 1 0-1.06 1.06 7 7 0 1 0 12.617-6.03l1.474 1.474a.75.75 0 0 0 1.06-1.06l-2.828-2.829a.75.75 0 0 0-1.06 0Z" fill="currentColor"/>
           </svg>
         </button>
       </div>
+    </div>
       <div class="form-grid">
         <div class="form-item">
           <label for="fecha">Fecha</label>
@@ -93,7 +100,10 @@
       <div class="form-grid">
         <div class="form-item">
           <label for="nombre">Nombre</label>
-          <input id="nombre" placeholder="Tu nombre" />
+          <div class="host-input-group">
+            <input id="nombre" placeholder="Tu nombre" autocomplete="off" />
+            <div id="hostSuggestions" class="host-suggestions" hidden role="listbox"></div>
+          </div>
         </div>
         <div class="form-item">
           <label for="email">Correo</label>
@@ -180,6 +190,16 @@
       <div class="row g"><button id="mOk" class="btn-blue">Aceptar</button></div>
     </div>
   </div>
+  <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
+    <footer class="site-footer">
+      <? if (footerSignature.url) { ?>
+        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+      <? } ?>
+      <? if (footerSignature.credits) { ?>
+        <div class="site-footer__credits"><?= footerSignature.credits ?></div>
+      <? } ?>
+    </footer>
+  <? } ?>
   <script>
     window.__LOGO_URL__     = "<?= logoUrl ?>";
     window.__DUR_MIN__      = <?= Number(cfg_('DURATION_MIN') || 30) ?>;
