@@ -107,15 +107,37 @@
     </div>
   </div>
 
+  <div id="modalFeedback" class="overlay" hidden>
+    <div class="modal-card" style="max-width:420px; text-align:left">
+      <h3 id="modalFeedbackTitle" style="margin:0 0 8px">Aviso</h3>
+      <div id="modalFeedbackBody" style="margin:10px 0;"></div>
+      <div class="row g" style="justify-content:flex-end; margin-top:12px">
+        <button id="modalFeedbackOk" class="btn-blue btn--sm" type="button">Entendido</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const $ = s => document.querySelector(s);
     const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{
-      show(msg){ const o=el(); o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++; },
-      hide(){ const o=el(); n=Math.max(0,n-1); if(!n) o.hidden=true; }
+      show(msg){ const o=el(); if(!o) return; const label=o.querySelector('.overlay-msg'); if(label) label.textContent=msg||'Procesando…'; o.hidden=false; n++; },
+      hide(){ const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true; },
+      reset(){ const o=el(); if(!o) return; n=0; o.hidden=true; }
     };})();
 
     function modalOpen(){ $('#modal').hidden=false; }
     function modalClose(){ $('#modal').hidden=true; }
+
+    function feedbackOpen(msg, title){
+      const modal = $('#modalFeedback');
+      if (!modal) return;
+      const titleEl = $('#modalFeedbackTitle');
+      const bodyEl = $('#modalFeedbackBody');
+      if (titleEl) titleEl.textContent = title || 'Aviso';
+      if (bodyEl) bodyEl.textContent = msg || '';
+      modal.hidden = false;
+    }
+    function feedbackClose(){ const modal = $('#modalFeedback'); if (modal) modal.hidden = true; }
 
     (function(){
       var src = "<?= logoUrl ?>";
@@ -158,21 +180,21 @@
       const depto  = ($('#fDepto').value||'').trim();
       const ext    = ($('#fExt').value||'').trim();
       if (!nombre || !depto || !/^\d+$/.test(ext)){
-        alert('Completa todos los campos. La extensión debe ser solo dígitos.');
+        feedbackOpen('Completa todos los campos. La extensión debe ser solo dígitos.', 'Datos incompletos');
         return;
       }
+      modalClose();
       Busy.show('Enviando solicitud…');
       google.script.run
         .withSuccessHandler(r=>{
           Busy.hide();
-          if (!r || !r.ok){ alert((r && r.msg) || 'No se pudo registrar la solicitud'); return; }
-          modalClose();
-          alert('¡Solicitud enviada! Quedó en estado Pendiente.');
+          if (!r || !r.ok){ feedbackOpen((r && r.msg) || 'No se pudo registrar la solicitud', 'No se pudo enviar'); return; }
           successUI();
+          feedbackOpen('¡Solicitud enviada! Quedó en estado Pendiente.', 'Solicitud enviada');
         })
         .withFailureHandler(e=>{
           Busy.hide();
-          alert('Error al enviar la solicitud.');
+          feedbackOpen('Error al enviar la solicitud.', 'Error');
         })
         .apiSolicitarAcceso(nombre, depto, ext);
     }
@@ -182,6 +204,8 @@
       if (b) b.onclick = modalOpen;
       $('#btnCerrar').onclick = modalClose;
       $('#btnEnviar').onclick = enviarSolicitud;
+      const ok = $('#modalFeedbackOk');
+      if (ok) ok.onclick = feedbackClose;
     });
   </script>
 </body>

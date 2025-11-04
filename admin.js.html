@@ -422,6 +422,18 @@ function drawReservas(arr){
     let estNic = estStr==='APROBADA'?'Aprobada':(estStr==='CANCELADA'?'Cancelada':(estStr==='PENDIENTE'?'Pendiente':r.estado||''));
     let estCls = estStr==='APROBADA'?'pill pill--ok':(estStr==='CANCELADA'?'pill pill--bad':(estStr==='PENDIENTE'?'pill pill--pending':'pill pill--other'));
     const late = tooLate(r);
+    const salonNombre = escHtml(r.salon_nombre || '');
+    const eventoNombre = escHtml(r.evento_nombre || '');
+    const publicoTipo = r.publico_tipo ? escHtml(r.publico_tipo) : '';
+    const eventoCell = `<span class="val"><span class="cell-main">${eventoNombre}</span>${publicoTipo ? `<span class="cell-note">Público: ${publicoTipo}</span>` : ''}</span>`;
+    const solicitanteNombre = escHtml(r.solicitante_nombre || '');
+    const solicitanteEmail = r.solicitante_email ? escHtml(r.solicitante_email) : '';
+    const solicitanteExt = r.extension ? escHtml(r.extension) : '';
+    const solicitanteMetaParts = [];
+    if (solicitanteEmail) solicitanteMetaParts.push(`<span>${solicitanteEmail}</span>`);
+    if (solicitanteExt) solicitanteMetaParts.push(`<span>Ext. ${solicitanteExt}</span>`);
+    const solicitanteMeta = solicitanteMetaParts.length ? `<span class="cell-meta">${solicitanteMetaParts.join('<span class="cell-sep">•</span>')}</span>` : '';
+    const solicitanteCell = `<span class="val"><span class="cell-main">${solicitanteNombre || '—'}</span>${solicitanteMeta}</span>`;
     // Columna Conserje (reglas: no habilitar si cancelada o late)
     let colConserje = '';
     if (r.conserje_requerido==='SI'){
@@ -432,7 +444,7 @@ function drawReservas(arr){
           const name = (r.conserje_nombre && r.conserje_nombre.trim())
                       || (__CON_MAP__ && __CON_MAP__[code]?.nombre)
                       || code;
-          colConserje = `<span>${name}</span>`;
+          colConserje = `<span>${escHtml(name)}</span>`;
         } else {
           colConserje = '';
         }
@@ -442,7 +454,7 @@ function drawReservas(arr){
           const name = (r.conserje_nombre && r.conserje_nombre.trim())
                       || (__CON_MAP__ && __CON_MAP__[code]?.nombre)
                       || code;
-          colConserje = `<a href="#" class="asignar-link" data-id="${r.id}">${name}</a>`;
+          colConserje = `<a href="#" class="asignar-link" data-id="${r.id}">${escHtml(name)}</a>`;
         } else {
           colConserje = `<a href="#" class="asignar-link" data-id="${r.id}">Asignar</a>`;
         }
@@ -460,9 +472,9 @@ function drawReservas(arr){
       <tr>
         <td data-th="Fecha"><span class="val">${fecha}</span></td>
         <td data-th="Hora"><span class="val">${hora}</span></td>
-        <td data-th="Salón"><span class="val">${r.salon_nombre}</span></td>
-        <td data-th="Evento"><span class="val">${r.evento_nombre||''}</span></td>
-        <td data-th="Solicitante"><span class="val">${r.solicitante_nombre} (${r.solicitante_email})</span></td>
+        <td data-th="Salón"><span class="val">${salonNombre}</span></td>
+        <td data-th="Evento">${eventoCell}</td>
+        <td data-th="Solicitante">${solicitanteCell}</td>
       <td data-th="Estado"><span class="${estCls}">${estNic}</span></td>
         <td data-th="Conserje"><span class="val">${colConserje}</span></td>
         <td data-th=""><span class="val">${acciones}</span></td>
@@ -736,6 +748,13 @@ function bootCreateAdmin(){
   $('#a-dur').onchange   = scheduleRefreshSlotsAdmin;
   $('#a-hora').onchange  = verifySelectedSlotAdmin;
   $('#a-crear').onclick  = crearReservaAdmin;
+
+  const refreshBtn = document.getElementById('a-refreshSlots');
+  if (refreshBtn){
+    refreshBtn.addEventListener('click', ()=>{
+      refreshSlotsAdmin();
+    });
+  }
 
   // Filtro de extensión (solo números) con hint
   const ext = $('#a-ext'), extErr = $('#a-extError');
@@ -1058,12 +1077,19 @@ function showBlockedSlotMessageAdmin(slotInfo){
 
   const items = ocupantes.map(o => {
     const nombre = escHtml(o.nombre || o.email || 'Reservante');
-    const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+    const correoHtml = o.email
+      ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>`
+      : 'Sin correo disponible';
+    const metaPieces = [`Correo: ${correoHtml}`];
+    if (o.extension){
+      metaPieces.push(`Extensión: ${escHtml(o.extension)}`);
+    }
+    const meta = `<div class="muted">${metaPieces.join(' · ')}</div>`;
+    const horario = `<div class="muted">Horario: ${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}</div>`;
+    const prioridad = `<div class="muted">Prioridad: ${escHtml(String(o.prioridad || 0))}</div>`;
     const evento = o.evento ? `<div class="muted">Evento: ${escHtml(o.evento)}</div>` : '';
     const publico = o.publico_tipo ? `<div class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</div>` : '';
-    const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
-    const prioridad = escHtml(String(o.prioridad || 0));
-    return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+    return `<li><strong>${nombre}</strong>${meta}${horario}${prioridad}${evento}${publico}</li>`;
   }).join('');
 
   const listaHtml = items ? `<ul style="padding-left:18px;margin:8px 0;">${items}</ul>` : '';

@@ -218,12 +218,19 @@ function showBlockedSlotMessage(slotInfo){
 
   const items = ocupantes.map(o => {
     const nombre = escHtml(o.nombre || o.email || 'Reservante');
-    const email = o.email ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>` : 'Sin correo disponible';
+    const correoHtml = o.email
+      ? `<a href="mailto:${escHtml(o.email)}">${escHtml(o.email)}</a>`
+      : 'Sin correo disponible';
+    const metaPieces = [`Correo: ${correoHtml}`];
+    if (o.extension){
+      metaPieces.push(`Extensión: ${escHtml(o.extension)}`);
+    }
+    const meta = `<div class="muted">${metaPieces.join(' · ')}</div>`;
+    const horario = `<div class="muted">Horario: ${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}</div>`;
+    const prioridad = `<div class="muted">Prioridad: ${escHtml(String(o.prioridad || 0))}</div>`;
     const evento = o.evento ? `<div class="muted">Evento: ${escHtml(o.evento)}</div>` : '';
     const publico = o.publico_tipo ? `<div class="muted">Tipo de público: ${escHtml(o.publico_tipo)}</div>` : '';
-    const horario = `${escHtml(o.inicio || '')} - ${escHtml(o.fin || '')}`;
-    const prioridad = escHtml(String(o.prioridad || 0));
-    return `<li><strong>${nombre}</strong><br/>Correo: ${email}<br/>Horario: ${horario}<br/>Prioridad: ${prioridad}${evento}${publico}</li>`;
+    return `<li><strong>${nombre}</strong>${meta}${horario}${prioridad}${evento}${publico}</li>`;
   }).join('');
 
   const listaHtml = items ? `<ul style="padding-left:18px;margin:8px 0;">${items}</ul>` : '';
@@ -675,13 +682,18 @@ function drawMisReservas(arr){
   const rows = arr.map(r=>{
     const fecha = fmtDateDMY(r.fecha);
     const hora  = `${fmt12(r.hora_inicio)} - ${fmt12(r.hora_fin)}`;
-    const cons  = (r.conserje_nombre && r.conserje_nombre.trim()) ? r.conserje_nombre : 'N/A';
+    const consName = (r.conserje_nombre && r.conserje_nombre.trim()) ? escHtml(r.conserje_nombre) : 'N/A';
     const estStr = String(r.estado||'');
     let estNic = estStr;
     let estCls = 'pill pill--other';
     if (estStr.toUpperCase()==='APROBADA'){ estNic='Aprobada'; estCls='pill pill--ok'; }
     else if (estStr.toUpperCase()==='CANCELADA'){ estNic='Cancelada'; estCls='pill pill--bad'; }
     else if (estStr.toUpperCase()==='PENDIENTE'){ estNic='Pendiente'; estCls='pill pill--pending'; }
+
+    const salonNombre = escHtml(r.salon_nombre || '');
+    const eventoNombre = escHtml(r.evento_nombre || '');
+    const publicoTipo = r.publico_tipo ? escHtml(r.publico_tipo) : '';
+    const eventoCell = `<span class="val"><span class="cell-main">${eventoNombre}</span>${publicoTipo ? `<span class="cell-note">Público: ${publicoTipo}</span>` : ''}</span>`;
 
     const actionBtn = canCancel(r)
       ? `<button class="btn-blue btn--sm btn-cancel" data-token="${r.token}" data-estado="${estStr}">${estStr.toUpperCase()==='PENDIENTE'?'Cancelar solicitud':'Cancelar'}</button>`
@@ -691,9 +703,9 @@ function drawMisReservas(arr){
       <tr>
         <td data-th="Fecha"><span class="val">${fecha}</span></td>
         <td data-th="Hora"><span class="val">${hora}</span></td>
-        <td data-th="Salón"><span class="val">${r.salon_nombre}</span></td>
-        <td data-th="Evento"><span class="val">${r.evento_nombre||''}</span></td>
-        <td data-th="Conserje"><span class="val">${cons}</span></td>
+        <td data-th="Salón"><span class="val">${salonNombre}</span></td>
+        <td data-th="Evento">${eventoCell}</td>
+        <td data-th="Conserje"><span class="val">${consName}</span></td>
         <td data-th="Estado"><span class="${estCls}">${estNic}</span></td>
         <td data-th=""><span class="val">${actionBtn}</span></td>
       </tr>`;
