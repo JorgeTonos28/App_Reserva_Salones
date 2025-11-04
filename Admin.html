@@ -213,6 +213,7 @@
         <button id="btnExport" class="btn btn-blue btn--sm" type="button">Exportar a Sheets</button>
       </div>
     </div>
+    <div class="section-title">Filtros</div>
     <div class="filters-row">
       <div class="filter-box">
         <label for="f1">Fecha desde</label>
@@ -266,7 +267,7 @@
         <input id="fTexto" placeholder="Buscar en cualquier campo (separa por espacios)" />
       </div>
       <div class="filter-actions">
-        <button id="btnBuscar" class="btn-blue btn--sm" type="button">Buscar</button>
+        <button id="btnBuscar" class="btn-blue btn--sm" type="button">Filtrar</button>
       </div>
     </div>
     <div id="reservas" style="margin-top:16px;"></div>
@@ -302,11 +303,11 @@
   </div>
   <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
     <footer class="site-footer">
-      <? if (footerSignature.url) { ?>
-        <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
-      <? } ?>
       <? if (footerSignature.credits) { ?>
         <div class="site-footer__credits"><?= footerSignature.credits ?></div>
+      <? } ?>
+      <? if (footerSignature.url) { ?>
+        <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
       <? } ?>
     </footer>
   <? } ?>
