@@ -10,6 +10,7 @@ let __SALON_CFG_MAP__ = {};
 let __SLOT_INFO_ADMIN__ = {};
 let __LAST_HIST_FILTERS__ = {};
 let __PRESET_APPLIED__ = false;
+let __HOST_FORM_ADMIN__ = null;
 const DEFAULT_DUR_CFG = {
   min: Number(window.__DUR_MIN__ || 30),
   max: Number(window.__DUR_MAX__ || 240),
@@ -56,6 +57,269 @@ function getEffectivePriorityForSalonAdmin(salonId){
   const target = String(salonId||'').trim().toUpperCase();
   if (!target) return base;
   return list.includes(target) ? base : 0;
+}
+
+function createHostFormController(opts){
+  const fields = opts.fields || {};
+  const errors = opts.errorHints || {};
+  const listEl = opts.listEl || null;
+  const meData = opts.me || {};
+  const state = {
+    isSession: true,
+    results: [],
+    timer: 0,
+    pendingKey: '',
+    pendingRaw: '',
+    selected: null,
+    enabled: false,
+    loadingTimer: 0
+  };
+  const minQueryLen = 2;
+  const queryCache = Object.create(null);
+  const fetchDelay = 220;
+  const loaderDelay = 1000;
+
+  function hideErrors(){
+    if (errors.email) errors.email.hidden = true;
+    if (errors.ext) errors.ext.hidden = true;
+    if (fields.ext) fields.ext.classList.remove('input-error');
+  }
+
+  function fillFromSession(){
+    if (fields.nombre) fields.nombre.value = (meData.nombre || '').trim();
+    if (fields.email) fields.email.value = (meData.email || '').trim();
+    if (fields.dep) fields.dep.value = (meData.departamento || '').trim();
+    if (fields.ext) fields.ext.value = String(meData.extension || '');
+    hideErrors();
+  }
+
+  function clearFields(){
+    if (fields.nombre) fields.nombre.value = '';
+    if (fields.email) fields.email.value = '';
+    if (fields.dep) fields.dep.value = '';
+    if (fields.ext) fields.ext.value = '';
+    hideErrors();
+  }
+
+  function clearLoadingIndicator(){
+    clearTimeout(state.loadingTimer);
+    if (listEl){
+      delete listEl.dataset.loading;
+    }
+  }
+
+  function showLoadingIndicator(){
+    if (!listEl) return;
+    listEl.dataset.loading = '1';
+    listEl.innerHTML = '<div class="host-suggestions__loading"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i><span>Buscando coincidencias…</span></div>';
+    listEl.hidden = false;
+  }
+
+  function hideSuggestions(){
+    if (listEl){
+      clearLoadingIndicator();
+      listEl.innerHTML = '';
+      listEl.hidden = true;
+    }
+    state.pendingKey = '';
+    state.pendingRaw = '';
+  }
+
+  function render(list){
+    if (!listEl) return;
+    clearLoadingIndicator();
+    if (!list || !list.length){
+      listEl.innerHTML = '<div class="host-suggestions__empty">Sin coincidencias</div>';
+      listEl.hidden = false;
+      return;
+    }
+    const items = list.map((item, idx) => `
+      <button type="button" class="host-suggestion" data-index="${idx}" role="option">
+        <span class="host-suggestion__name">${escHtml(item.nombre || item.email || '(sin nombre)')}</span>
+        <span class="host-suggestion__email">${escHtml(item.email || '')}</span>
+        <span class="host-suggestion__dept">${escHtml(item.departamento || 'Sin departamento')}</span>
+      </button>
+    `).join('');
+    listEl.innerHTML = items;
+    listEl.hidden = false;
+  }
+
+  function applySelection(item){
+    if (!item) return;
+    if (fields.nombre) fields.nombre.value = item.nombre || item.email || '';
+    if (fields.email) fields.email.value = item.email || '';
+    if (fields.dep) fields.dep.value = item.departamento || '';
+    if (fields.ext) fields.ext.value = item.extension || '';
+    state.selected = item;
+    hideErrors();
+    hideSuggestions();
+  }
+
+  function buildHaystack(item){
+    return [item.nombre || '', item.email || '', item.departamento || '']
+      .join(' ')
+      .toLowerCase();
+  }
+
+  function cacheResults(key, list){
+    if (!key) return list;
+    queryCache[key] = list;
+    return list;
+  }
+
+  function fetch(query, key){
+    google.script.run
+      .withSuccessHandler(res => {
+        if (state.pendingKey !== key) return;
+        clearLoadingIndicator();
+        const arr = (res && res.ok && Array.isArray(res.data)) ? res.data : [];
+        const augmented = arr.map(item => ({ ...item, __haystack: buildHaystack(item) }));
+        state.results = augmented;
+        cacheResults(key, augmented);
+        render(augmented);
+      })
+      .withFailureHandler(() => {
+        if (state.pendingKey !== key) return;
+        clearLoadingIndicator();
+        state.results = [];
+        render([]);
+      })
+      .apiBuscarAnfitriones(query);
+  }
+
+  function schedule(query){
+    clearTimeout(state.timer);
+    clearTimeout(state.loadingTimer);
+    if (!state.enabled){
+      hideSuggestions();
+      return;
+    }
+    const normalized = String(query || '').trim();
+    if (!normalized || normalized.replace(/\s+/g,'').length < minQueryLen){
+      hideSuggestions();
+      state.results = [];
+      return;
+    }
+    const key = normalized.toLowerCase();
+    state.pendingKey = key;
+    state.pendingRaw = normalized;
+
+    if (queryCache[key]){
+      state.results = queryCache[key];
+      render(state.results);
+      return;
+    }
+
+    const tokens = key.split(/\s+/).filter(Boolean);
+    if (tokens.length){
+      let best = null;
+      Object.keys(queryCache).forEach(cachedKey => {
+        if (!cachedKey || key.length < cachedKey.length) return;
+        if (!key.startsWith(cachedKey)) return;
+        const base = queryCache[cachedKey];
+        if (!Array.isArray(base)) return;
+        const filtered = base.filter(item => {
+          const hay = (item && item.__haystack) || '';
+          return tokens.every(tok => hay.indexOf(tok) >= 0);
+        });
+        if (key !== cachedKey){
+          cacheResults(key, filtered);
+        }
+        if (!best || filtered.length > best.length){
+          best = filtered;
+        }
+      });
+      if (best){
+        state.results = best;
+        render(best);
+        return;
+      }
+    }
+
+    state.loadingTimer = setTimeout(()=>{
+      if (state.pendingKey === key){
+        showLoadingIndicator();
+      }
+    }, loaderDelay);
+
+    state.timer = setTimeout(()=> fetch(normalized, key), fetchDelay);
+  }
+
+  function setPressed(yes){
+    const btnYes = opts.toggleYes;
+    const btnNo = opts.toggleNo;
+    if (!btnYes || !btnNo) return;
+    btnYes.setAttribute('aria-pressed', yes ? 'true' : 'false');
+    btnNo.setAttribute('aria-pressed', yes ? 'false' : 'true');
+  }
+
+  function setSessionMode(flag){
+    state.isSession = !!flag;
+    if (state.isSession){
+      state.enabled = false;
+      state.selected = null;
+      hideSuggestions();
+      fillFromSession();
+    } else {
+      state.enabled = true;
+      state.selected = null;
+      clearFields();
+      if (fields.nombre) fields.nombre.focus();
+    }
+    setPressed(state.isSession);
+  }
+
+  function handleNombreInput(){
+    if (state.isSession) return;
+    const value = (fields.nombre && fields.nombre.value || '').trim();
+    schedule(value);
+  }
+
+  if (opts.toggleYes) opts.toggleYes.onclick = () => setSessionMode(true);
+  if (opts.toggleNo) opts.toggleNo.onclick = () => setSessionMode(false);
+
+  const nombreEl = fields.nombre;
+  if (nombreEl){
+    nombreEl.addEventListener('input', ()=>{ state.selected = null; handleNombreInput(); });
+    nombreEl.addEventListener('focus', ()=>{
+      if (!state.isSession && state.results.length && listEl){
+        listEl.hidden = false;
+      }
+    });
+  }
+  if (fields.email) fields.email.addEventListener('input', ()=>{ state.selected = null; });
+  if (fields.dep) fields.dep.addEventListener('input', ()=>{ state.selected = null; });
+  if (fields.ext) fields.ext.addEventListener('input', ()=>{ state.selected = null; });
+
+  if (listEl){
+    listEl.addEventListener('click', ev => {
+      const btn = ev.target.closest('.host-suggestion');
+      if (!btn) return;
+      ev.preventDefault();
+      const idx = Number(btn.getAttribute('data-index'));
+      const item = state.results[idx];
+      if (item) applySelection(item);
+    });
+  }
+
+  document.addEventListener('click', ev => {
+    if (!listEl || listEl.hidden) return;
+    const target = ev.target;
+    if ((listEl.contains && listEl.contains(target)) || (nombreEl && nombreEl === target)){
+      return;
+    }
+    hideSuggestions();
+  });
+
+  setSessionMode(true);
+
+  return {
+    isSessionHost(){ return state.isSession; },
+    selectedHost(){ return state.selected; },
+    reset(){ setSessionMode(true); },
+    manual(){ setSessionMode(false); },
+    hideSuggestions
+  };
 }
 const Busy = (()=>{ let n=0; const el=()=>$('#overlay'); return{ show(msg){const o=el(); if(!o) return; o.querySelector('.overlay-msg').textContent=msg||'Procesando…'; o.hidden=false; n++;}, hide(){const o=el(); if(!o) return; n=Math.max(0,n-1); if(!n) o.hidden=true;}, reset(){const o=el(); if(!o) return; n=0; o.hidden=true;} };})();
 function modal(msg, title, opts){
@@ -682,42 +946,22 @@ function init(){
 
 // ===== Crear reserva (Admin) =====
 function bootCreateAdmin(){
-  // Toggle anfitrión (default: “Sí” → autollenar con usuario en sesión vía Admin)
-  (function(){
-    const btnYes = document.getElementById('a-hostYes');
-    const btnNo  = document.getElementById('a-hostNo');
-    const fields = {
+  __HOST_FORM_ADMIN__ = createHostFormController({
+    toggleYes: document.getElementById('a-hostYes'),
+    toggleNo: document.getElementById('a-hostNo'),
+    fields: {
       nombre: document.getElementById('a-nombre'),
       email:  document.getElementById('a-email'),
       dep:    document.getElementById('a-dep'),
-      ext:    document.getElementById('a-ext'),
-    };
-    // Datos del usuario en sesión expuestos por Admin.html
-    const MEA = (window.__ME__ || {});
-    function fillFromME(){
-      if (fields.nombre) fields.nombre.value = (MEA.nombre||'').trim();
-      if (fields.email)  fields.email.value  = (MEA.email||'').trim();
-      if (fields.dep)    fields.dep.value    = (MEA.departamento||'').trim();
-      if (fields.ext)    fields.ext.value    = (MEA.extension||'');
-    }
-    function clearHost(){
-      Object.values(fields).forEach(el=>{ if (el) el.value=''; });
-      const eHint = document.getElementById('a-emailError'); if (eHint) eHint.hidden = true;
-      const xHint = document.getElementById('a-extError');   if (xHint) xHint.hidden = true;
-    }
-    function setPressed(yes){
-      if (!btnYes || !btnNo) return;
-      btnYes.setAttribute('aria-pressed', yes?'true':'false');
-      btnNo.setAttribute('aria-pressed',  yes?'false':'true');
-    }
-    if (btnYes && btnNo){
-      btnYes.onclick = ()=>{ setPressed(true); fillFromME(); };
-      btnNo.onclick  = ()=>{ setPressed(false); clearHost(); };
-      // Por defecto: Sí → autollenar desde BD
-      setPressed(true);
-      fillFromME();
-    }
-  })();
+      ext:    document.getElementById('a-ext')
+    },
+    errorHints: {
+      email: document.getElementById('a-emailError'),
+      ext:   document.getElementById('a-extError')
+    },
+    listEl: document.getElementById('a-hostSuggestions'),
+    me: window.__ME__ || {}
+  });
 
   // Dominio email en Admin
   (function(){
@@ -755,6 +999,12 @@ function bootCreateAdmin(){
       refreshSlotsAdmin();
     });
   }
+  const resetBtn = document.getElementById('a-resetForm');
+  if (resetBtn){
+    resetBtn.addEventListener('click', ()=>{
+      resetAdminReservaForm();
+    });
+  }
 
   // Filtro de extensión (solo números) con hint
   const ext = $('#a-ext'), extErr = $('#a-extError');
@@ -772,6 +1022,33 @@ function bootCreateAdmin(){
   }
   // Capacidad: título dinámico y hint al exceder (sin pedir al server)
   initSalonCapacityAdmin();
+  resetAdminReservaForm();
+}
+
+function resetAdminReservaForm(){
+  const salonSel = $('#a-salon'); if (salonSel) salonSel.value = '';
+  renderDurationsFromConfigAdmin();
+  const fechaEl = $('#a-fecha'); if (fechaEl) fechaEl.value = todayYMD();
+  const durEl = $('#a-dur'); if (durEl) durEl.value = (durEl.querySelector('option')?.value || '');
+  const horaEl = $('#a-hora'); if (horaEl) horaEl.innerHTML = '<option value="">[Seleccionar]</option>';
+  const restrHint = document.getElementById('a-restriccionHint'); if (restrHint){ restrHint.hidden = true; restrHint.textContent = ''; }
+  const apprHint = document.getElementById('a-aprobacionHint'); if (apprHint){ apprHint.hidden = true; apprHint.textContent = ''; }
+  if (__HOST_FORM_ADMIN__){
+    __HOST_FORM_ADMIN__.reset();
+  } else {
+    const nombre = $('#a-nombre'); if (nombre) nombre.value = '';
+    const email = $('#a-email'); if (email) email.value = '';
+    const dep = $('#a-dep'); if (dep) dep.value = '';
+    const ext = $('#a-ext'); if (ext) ext.value = '';
+  }
+  const emailErr = $('#a-emailError'); if (emailErr) emailErr.hidden = true;
+  const extErr = $('#a-extError'); if (extErr) extErr.hidden = true;
+  const evento = $('#a-evento'); if (evento) evento.value = '';
+  const cant = $('#a-cant'); if (cant){ cant.value = ''; cant.classList.remove('input-error'); }
+  const cantErr = $('#a-cantError'); if (cantErr){ cantErr.hidden = true; cantErr.textContent = ''; }
+  const publico = $('#a-publico'); if (publico) publico.value = '';
+  applyAdminSalonMetaHints();
+  scheduleRefreshSlotsAdmin();
 }
 
 let _admReqSeq = 0;
@@ -954,6 +1231,15 @@ function crearReservaAdmin(){
     evento_nombre: $('#a-evento').value.trim(),
     publico_tipo: $('#a-publico').value
   };
+  if (__HOST_FORM_ADMIN__){
+    p.host_es_sesion = __HOST_FORM_ADMIN__.isSessionHost();
+    const selected = __HOST_FORM_ADMIN__.selectedHost && __HOST_FORM_ADMIN__.selectedHost();
+    if (!p.host_es_sesion && selected && selected.email){
+      p.host_lookup_email = selected.email;
+    }
+  } else {
+    p.host_es_sesion = true;
+  }
   if (!p.salon_id || !p.fecha || !p.hora_inicio || !p.duracion_min || !p.nombre || !p.email || !p.departamento || !p.extension || !p.cant_personas || !p.evento_nombre){
     return modal('Completa todos los campos obligatorios.');
   }
@@ -1008,10 +1294,7 @@ function crearReservaAdminSubmit(payload){
         modal('Reserva creada.');
       }
       buscar(); // refresca listado
-      // reset rápido
-      ['a-salon','a-hora','a-evento','a-nombre','a-email','a-dep','a-ext','a-cant'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.value=''; });
-      const df = document.getElementById('a-fecha'); if(df) df.value = df.min || df.value;
-      applyAdminSalonMetaHints();
+      resetAdminReservaForm();
     } else { modal((r&&r.msg)||'No se pudo crear'); } })
     .withFailureHandler(()=>{ Busy.hide(); modal('Error al crear'); })
     .apiCrearReserva(payload);

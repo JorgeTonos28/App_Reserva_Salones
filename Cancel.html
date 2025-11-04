@@ -38,6 +38,17 @@
     </div>
   </div>
 
+  <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
+    <footer class="site-footer">
+      <? if (footerSignature.url) { ?>
+        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+      <? } ?>
+      <? if (footerSignature.credits) { ?>
+        <div class="site-footer__credits"><?= footerSignature.credits ?></div>
+      <? } ?>
+    </footer>
+  <? } ?>
+
   <script>
     const token = "<?= cancelToken ?>";
     const $ = s => document.querySelector(s);

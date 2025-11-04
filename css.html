@@ -188,6 +188,7 @@
     color:#4b5563;
     margin:0 0 6px;
   }
+  .label-actions{ display:flex; align-items:center; gap:8px; }
   /* Meta del label: (máx N) compacto e inline */
   .form-item label .label-meta{
     font-size:12px;
@@ -195,6 +196,39 @@
     color:#6b7280;
     white-space:nowrap;         /* evita salto de línea que desalineaba */
   }
+  .host-input-group{ position:relative; display:flex; flex-direction:column; gap:6px; }
+  .host-suggestions{
+    position:absolute;
+    top:100%;
+    left:0;
+    right:0;
+    margin-top:4px;
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:12px;
+    box-shadow:0 12px 28px rgba(15,23,42,.12);
+    max-height:260px;
+    overflow:auto;
+    z-index:30;
+    padding:4px 0;
+  }
+  .host-suggestions[hidden]{ display:none !important; }
+  .host-suggestion{ display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:10px 14px; width:100%; border:none; background:none; text-align:left; cursor:pointer; font-size:13px; color:#111827; }
+  .host-suggestion:hover,
+  .host-suggestion:focus{ background:#eef2ff; outline:none; }
+  .host-suggestion__name{ font-weight:600; font-size:14px; }
+  .host-suggestion__email{ font-size:12px; color:#4b5563; }
+  .host-suggestion__dept{ font-size:12px; color:#6b7280; }
+  .host-suggestions__empty{ padding:10px 14px; font-size:13px; color:#6b7280; }
+  .host-suggestions__loading{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 14px;
+    font-size:13px;
+    color:#4b5563;
+  }
+  .host-suggestions__loading i{ font-size:16px; }
 
   /* Label con texto a la izquierda y nota (máx X) a la derecha, en una sola línea */
   .label-row{
@@ -271,7 +305,7 @@
   .btn-toggle[aria-pressed="true"]{ box-shadow:0 0 0 2px rgba(0,0,0,.05) inset; filter:saturate(1.1); }
 
   /* Botón solo-ícono, compacto */
-  .icon-btn{ 
+  .icon-btn{
     display:inline-flex;
     align-items:center;
     justify-content:center;
@@ -283,16 +317,16 @@
     color:#fff;
     cursor:pointer;
     box-shadow:0 1px 3px rgba(0,0,0,.1);
-    transition:transform .18s ease, background .18s ease, box-shadow .18s ease;
+    transition:background .18s ease, box-shadow .18s ease;
+    font-size:16px;
+    line-height:1;
   }
-
-  /* Flechita un poco más grande (SVG 20x20) y animación */
   .icon-btn:hover{
     background:var(--blue-600);
-    transform:rotate(20deg);
     box-shadow:0 3px 8px rgba(0,0,0,.18);
   }
-  .label-row .icon-btn{ width:34px; height:34px; }
+  .icon-btn i{ pointer-events:none; }
+  .label-row .icon-btn{ width:34px; height:34px; font-size:15px; }
 
   /* ===== Responsive table -> cards (Mis reservas) ===== */
   .resp-table{ width:100%; border-collapse:collapse; }
@@ -311,7 +345,7 @@
   .cell-note{ display:block; margin-top:4px; font-size:12px; color:#4b5563; }
 
   .cancel-page{ min-height:100vh; display:flex; flex-direction:column; }
-  .cancel-layout{ width:100%; max-width:620px; margin:24px auto; padding:0 16px; display:flex; flex-direction:column; gap:18px; }
+  .cancel-layout{ width:100%; max-width:620px; margin:24px auto; padding:0 16px; display:flex; flex-direction:column; gap:18px; flex:1 1 auto; }
   .cancel-card{ text-align:left; }
   .cancel-card--header{ display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; }
   .cancel-card--header img{ height:56px; width:auto; }
@@ -321,6 +355,20 @@
   .cancel-summary__value{ color:#374151; }
   .cancel-textarea{ width:100%; min-height:110px; border:1px solid var(--border); border-radius:10px; padding:12px; font-family:inherit; font-size:14px; resize:vertical; box-sizing:border-box; margin-top:8px; }
   .cancel-actions{ display:flex; justify-content:center; margin-top:16px; }
+  .site-footer{
+    margin:24px 0 12px;
+    padding:16px;
+    border-top:1px solid var(--border);
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    align-items:center;
+    text-align:center;
+    font-size:13px;
+    color:#4b5563;
+  }
+  .site-footer__signature{ width:auto; height:auto; max-width:100%; }
+  .site-footer__credits{ font-size:13px; color:#4b5563; }
   
   /* ======= Responsive ======= */
   @media (max-width: 1024px){

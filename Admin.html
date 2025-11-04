@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>(function(){try{var f=(window.top!==window.self);var s=Math.max(screen.width,screen.height)<=880;if(f&&s){window.top.location.href=window.location.href;}}catch(e){}})();</script>
   <?!= include_('css'); ?>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" referrerpolicy="no-referrer" />
 </head>
 <body class="container">
   <header class="card" style="text-align:center">
@@ -151,11 +152,14 @@
       <div class="form-item">
         <div class="label-row">
           <label for="a-hora">Hora</label>
-          <button id="a-refreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path d="M12 5v2.5a.75.75 0 0 0 1.28.53l3.97-3.97a.75.75 0 0 0 0-1.06L13.28-.03A.75.75 0 0 0 12 .5V3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7z" fill="currentColor"/>
-            </svg>
-          </button>
+          <div class="label-actions">
+            <button id="a-resetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
+              <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
+            </button>
+            <button id="a-refreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <select id="a-hora"></select>
       </div>
@@ -163,7 +167,13 @@
     <div class="section">
       <div class="section-title">Datos del anfitrión</div>
       <div class="form-grid">
-        <div class="form-item"><label for="a-nombre">Nombre</label><input id="a-nombre" /></div>
+        <div class="form-item">
+          <label for="a-nombre">Nombre</label>
+          <div class="host-input-group">
+            <input id="a-nombre" autocomplete="off" />
+            <div id="a-hostSuggestions" class="host-suggestions" hidden role="listbox"></div>
+          </div>
+        </div>
         <div class="form-item">
           <label for="a-email">Correo</label>
           <input id="a-email" type="email" placeholder="jperez@infotep.gob.do" />
@@ -286,6 +296,16 @@
       <div class="row g"><button id="mOk" class="btn-blue">Aceptar</button></div>
     </div>
   </div>
+  <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
+    <footer class="site-footer">
+      <? if (footerSignature.url) { ?>
+        <img src="<?= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+      <? } ?>
+      <? if (footerSignature.credits) { ?>
+        <div class="site-footer__credits"><?= footerSignature.credits ?></div>
+      <? } ?>
+    </footer>
+  <? } ?>
 
   <script>
     window.__LOGO_URL__ = "<?= logoUrl ?>";
