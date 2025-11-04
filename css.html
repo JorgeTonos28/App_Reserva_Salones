@@ -220,6 +220,15 @@
   .host-suggestion__email{ font-size:12px; color:#4b5563; }
   .host-suggestion__dept{ font-size:12px; color:#6b7280; }
   .host-suggestions__empty{ padding:10px 14px; font-size:13px; color:#6b7280; }
+  .host-suggestions__loading{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 14px;
+    font-size:13px;
+    color:#4b5563;
+  }
+  .host-suggestions__loading i{ font-size:16px; }
 
   /* Label con texto a la izquierda y nota (máx X) a la derecha, en una sola línea */
   .label-row{
@@ -296,7 +305,7 @@
   .btn-toggle[aria-pressed="true"]{ box-shadow:0 0 0 2px rgba(0,0,0,.05) inset; filter:saturate(1.1); }
 
   /* Botón solo-ícono, compacto */
-  .icon-btn{ 
+  .icon-btn{
     display:inline-flex;
     align-items:center;
     justify-content:center;
@@ -308,16 +317,16 @@
     color:#fff;
     cursor:pointer;
     box-shadow:0 1px 3px rgba(0,0,0,.1);
-    transition:transform .18s ease, background .18s ease, box-shadow .18s ease;
+    transition:background .18s ease, box-shadow .18s ease;
+    font-size:16px;
+    line-height:1;
   }
-
-  /* Flechita un poco más grande (SVG 20x20) y animación */
   .icon-btn:hover{
     background:var(--blue-600);
-    transform:rotate(20deg);
     box-shadow:0 3px 8px rgba(0,0,0,.18);
   }
-  .label-row .icon-btn{ width:34px; height:34px; }
+  .icon-btn i{ pointer-events:none; }
+  .label-row .icon-btn{ width:34px; height:34px; font-size:15px; }
 
   /* ===== Responsive table -> cards (Mis reservas) ===== */
   .resp-table{ width:100%; border-collapse:collapse; }

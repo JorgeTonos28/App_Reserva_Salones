@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.12-2025-11-11';
+const APP_VERSION = 'salones-v10.13-2025-11-13';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -392,6 +392,7 @@ function ensureHostUsuarioDesdeReserva_(host, actorEmail){
 
   SH_USR.appendRow([email, nombre, departamento, 'SOLICITANTE', 0, '', 'PENDIENTE', extension, '']);
   SpreadsheetApp.flush();
+  invalidateHostDirectoryCache_();
   try {
     notifyGeneralAdminsUsuarioPendiente_({ email, nombre, departamento, extension }, actorEmail);
   } catch(e){}
@@ -2416,7 +2417,7 @@ function getSignatureFileId_(){
 }
 
 function getSignatureUrl(){
-  const explicit = cfg_('FOOTER_SIGNATURE_URL');
+  const explicit = cfg_('FOOTER_SIGNATURE_URL') || cfg_('FOOTER_SIGNATURE_UR');
   if (explicit) return explicit;
   const cfgId = cfg_('FOOTER_SIGNATURE_FILE_ID');
   if (cfgId){
@@ -2443,6 +2444,42 @@ function footerSignatureContext_(){
   return { url, width, credits };
 }
 
+const HOST_DIRECTORY_CACHE_KEY = 'HOST_DIRECTORY_V1';
+
+function loadHostDirectory_(){
+  if (!SH_USR) return [];
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(HOST_DIRECTORY_CACHE_KEY);
+  if (cached){
+    try{
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }catch(e){}
+  }
+  const lr = SH_USR.getLastRow();
+  if (lr < 2) return [];
+  const rows = SH_USR.getRange(2,1,lr-1,9).getValues();
+  const data = [];
+  for (let i=0;i<rows.length;i++){
+    const r = rows[i];
+    const email = String(r[0]||'').trim().toLowerCase();
+    if (!email) continue;
+    const nombre = String(r[1]||'').trim();
+    const departamento = String(r[2]||'').trim();
+    const rol = String(r[3]||'').trim().toUpperCase();
+    const estado = String(r[6]||'').trim().toUpperCase();
+    const extension = String(r[7]||'').trim();
+    const haystack = (nombre+' '+email+' '+departamento).toLowerCase();
+    data.push({ email, nombre, departamento, rol, estado, extension, haystack });
+  }
+  try{ cache.put(HOST_DIRECTORY_CACHE_KEY, JSON.stringify(data), 6*60); }catch(e){}
+  return data;
+}
+
+function invalidateHostDirectoryCache_(){
+  try{ CacheService.getScriptCache().remove(HOST_DIRECTORY_CACHE_KEY); }catch(e){}
+}
+
 // ========= Usuarios (Admin CRUD) =========
 function apiBuscarAnfitriones(query){
   const me = getUser_();
@@ -2452,28 +2489,25 @@ function apiBuscarAnfitriones(query){
   if (!text) return { ok:true, data:[] };
   const tokens = text.split(/\s+/).map(s => s.trim().toLowerCase()).filter(Boolean);
   if (!tokens.length) return { ok:true, data:[] };
-  const lr = SH_USR.getLastRow();
-  if (lr < 2) return { ok:true, data:[] };
-  const rows = SH_USR.getRange(2,1,lr-1,9).getValues();
+  const directory = loadHostDirectory_();
   const results = [];
   const seen = {};
-  for (let i=0;i<rows.length;i++){
-    const r = rows[i];
-    const email = String(r[0]||'').trim().toLowerCase();
+  for (let i=0;i<directory.length;i++){
+    const entry = directory[i];
+    const email = entry.email;
     if (!email || seen[email]) continue;
-    const nombre = String(r[1]||'').trim();
-    const departamento = String(r[2]||'').trim();
-    const rol = String(r[3]||'').trim().toUpperCase();
-    const estado = String(r[6]||'').trim().toUpperCase();
-    const extension = String(r[7]||'').trim();
-    const hayNombre = nombre.toLowerCase();
-    const hayDepto = departamento.toLowerCase();
-    const matches = tokens.every(tok => {
-      return hayNombre.indexOf(tok) >= 0 || email.indexOf(tok) >= 0 || hayDepto.indexOf(tok) >= 0;
-    });
+    const hay = String(entry.haystack||'');
+    const matches = tokens.every(tok => hay.indexOf(tok) >= 0);
     if (!matches) continue;
     seen[email] = true;
-    results.push({ email, nombre, departamento, rol, estado, extension });
+    results.push({
+      email,
+      nombre: entry.nombre,
+      departamento: entry.departamento,
+      rol: entry.rol,
+      estado: entry.estado,
+      extension: entry.extension
+    });
   }
   const estadoRank = estado => {
     const up = String(estado||'').toUpperCase();
@@ -2577,6 +2611,7 @@ function apiUpsertUsuario(u){
   if (rowIndex > 0){
     SH_USR.getRange(rowIndex,2,1,8).setValues([rowValues]);
     SpreadsheetApp.flush();
+    invalidateHostDirectoryCache_();
     if (prevEstado === 'PENDIENTE' && est === 'ACTIVO'){
       try{ notifyUsuarioActivado_(userForMail); }catch(e){}
     }
@@ -2584,6 +2619,7 @@ function apiUpsertUsuario(u){
   }
   SH_USR.appendRow([email,nombre,dep,rol,prio,prioSalonesRaw,est,ext,adminId]);
   SpreadsheetApp.flush();
+  invalidateHostDirectoryCache_();
   try{ notifyUsuarioCreado_(userForMail); }catch(e){}
   return { ok:true, created:true };
 }
@@ -2919,6 +2955,7 @@ function apiSolicitarAcceso(nombre, departamento, extension){
           SH_USR.getRange(i+2,7).setValue('PENDIENTE'); // estado (col 7 = G)
           SH_USR.getRange(i+2,8).setValue(extension);   // extension (col 8 = H)
           SpreadsheetApp.flush();
+          invalidateHostDirectoryCache_();
           try{ notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension); }catch(e){}
           return { ok:true, updated:true };
         }
@@ -2929,6 +2966,7 @@ function apiSolicitarAcceso(nombre, departamento, extension){
     // Si faltan columnas, Apps Script las crea al vuelo
     SH_USR.appendRow([email, nombre, departamento, '', 0, '', 'PENDIENTE', extension, '1']);
     SpreadsheetApp.flush();
+    invalidateHostDirectoryCache_();
     try{ notifyAdminsNuevaSolicitud_(email, nombre, departamento, extension); }catch(e){}
     return { ok:true, created:true };
   }catch(e){
