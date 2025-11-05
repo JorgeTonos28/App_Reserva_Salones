@@ -1575,6 +1575,8 @@ function openUsuariosModal(){
     if (!items.length){
       listEl.classList.add('is-empty');
       listEl.innerHTML = '';
+      selected = null;
+      clearUserForm();
       return;
     }
     const rows = items.map(u=>`
@@ -1589,24 +1591,94 @@ function openUsuariosModal(){
         <td data-th="Admin">${u.administracion_id||'1'}</td>
       </tr>
     `).join('');
+    const cards = items.map(u=>{
+      const email = escHtml(u.email||'');
+      const name = escHtml(u.nombre||'(sin nombre)');
+      const departamento = escHtml(u.departamento||'');
+      const rol = escHtml(u.rol||'');
+      const prioridad = Number(u.prioridad||0);
+      const prioridadSalones = escHtml(u.prioridad_salones||'');
+      const estado = escHtml(u.estado||'');
+      const extension = escHtml(u.extension||'');
+      const adminId = escHtml(u.administracion_id||'1');
+      const tagParts = [];
+      if (rol) tagParts.push(`<span class="tag">${rol}</span>`);
+      tagParts.push(`<span class="tag">Prioridad ${prioridad}</span>`);
+      if (estado) tagParts.push(`<span class="tag">${estado}</span>`);
+      const tagsHtml = tagParts.join('');
+      return `
+        <article class="user-card" data-email="${email}">
+          <div class="user-card__head">
+            <h4 class="user-card__name">${name}</h4>
+            <span class="user-card__email">${email}</span>
+          </div>
+          ${tagsHtml ? `<div class="user-card__tags">${tagsHtml}</div>` : ''}
+          <div class="user-card__meta">
+            <div class="user-card__meta-item">
+              <span class="user-card__meta-label">Departamento</span>
+              <span>${departamento || '—'}</span>
+            </div>
+            <div class="user-card__meta-item">
+              <span class="user-card__meta-label">Salones con prioridad</span>
+              <span>${prioridadSalones || '—'}</span>
+            </div>
+            <div class="user-card__meta-item">
+              <span class="user-card__meta-label">Extensión</span>
+              <span>${extension || '—'}</span>
+            </div>
+            <div class="user-card__meta-item">
+              <span class="user-card__meta-label">Administración</span>
+              <span>${adminId || '—'}</span>
+            </div>
+          </div>
+        </article>
+      `;
+    }).join('');
     listEl.classList.remove('is-empty');
-    listEl.innerHTML = `<table class="user-table"><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>`;
-    // selección
-    listEl.querySelectorAll('.u-row').forEach(tr=>{
-      tr.onclick = ()=>{
-        const em = tr.dataset.email;
-        if (selected && selected.email===em){
-          selected=null; tr.classList.remove('selected');
-          clearUserForm();
-          return;
-        }
-        listEl.querySelectorAll('.u-row').forEach(x=>x.classList.remove('selected'));
-        tr.classList.add('selected');
-        const row = items.find(x=>x.email===em);
-        selected = row||null;
-        fillUserForm(row);
-      };
+    listEl.innerHTML = `
+      <table class="user-table"><thead><tr><th>Nombre / Correo</th><th>Departamento</th><th>Rol</th><th>Prioridad</th><th>Salones con prioridad</th><th>Estado</th><th>Ext.</th><th>Admin</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="user-card-list">${cards}</div>
+    `;
+    const syncSelection = email => {
+      listEl.querySelectorAll('.u-row, .user-card').forEach(node => {
+        if (!node || typeof node.dataset?.email === 'undefined') return;
+        node.classList.toggle('selected', email && node.dataset.email === email);
+      });
+    };
+    const handleSelection = email => {
+      const current = email ? items.find(x => x.email === email) : null;
+      if (selected && selected.email === email){
+        selected = null;
+        syncSelection('');
+        clearUserForm();
+        return;
+      }
+      if (!current){
+        selected = null;
+        syncSelection('');
+        clearUserForm();
+        return;
+      }
+      selected = current;
+      syncSelection(email);
+      fillUserForm(current);
+    };
+    listEl.querySelectorAll('.u-row').forEach(tr => {
+      tr.onclick = ()=> handleSelection(tr.dataset.email || '');
     });
+    listEl.querySelectorAll('.user-card').forEach(card => {
+      card.onclick = ()=> handleSelection(card.dataset.email || '');
+    });
+    if (selected){
+      const stillThere = items.find(x => x.email === selected.email);
+      if (stillThere){
+        selected = stillThere;
+        syncSelection(selected.email);
+      }else{
+        selected = null;
+        syncSelection('');
+      }
+    }
   };
   const modalMsg = (s)=>{ window.modal(s); };
   const clearUserForm = ()=>{
