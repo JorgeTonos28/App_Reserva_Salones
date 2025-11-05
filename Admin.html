@@ -47,7 +47,7 @@
         <h3>Usuarios</h3>
       </div>
       <div class="modal-body">
-        <div id="users-list" class="table-overflow table-overflow--flat is-empty" data-empty-text="No hay usuarios registrados."></div>
+        <div id="users-list" class="table-overflow table-overflow--flat user-list is-empty" data-empty-text="No hay usuarios registrados."></div>
         <small class="muted">Los campos marcados con <span class="required">*</span> son obligatorios.</small>
         <div class="user-form-grid">
           <div class="user-field">
@@ -288,7 +288,7 @@
   </div>
 
   <!-- Overlay global -->
-  <div id="overlay" class="overlay" hidden>
+  <div id="overlay" class="overlay overlay--busy" hidden>
     <div class="spinner" role="status" aria-label="Cargando"></div>
     <div class="overlay-msg" aria-live="polite">Cargando…</div>
   </div>
@@ -303,12 +303,14 @@
   </div>
   <? if (footerSignature && (footerSignature.url || footerSignature.credits)) { ?>
     <footer class="site-footer">
-      <? if (footerSignature.credits) { ?>
-        <div class="site-footer__credits"><?= footerSignature.credits ?></div>
-      <? } ?>
-      <? if (footerSignature.url) { ?>
-        <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
-      <? } ?>
+      <div class="site-footer__credits">
+        <? if (footerSignature.credits) { ?>
+          <span class="site-footer__credits-text"><?= footerSignature.credits ?></span>
+        <? } ?>
+        <? if (footerSignature.url) { ?>
+          <img src="<?!= footerSignature.url ?>" alt="Firma institucional" class="site-footer__signature" style="max-width: <?= footerSignature.width ?>px;" />
+        <? } ?>
+      </div>
     </footer>
   <? } ?>
 
