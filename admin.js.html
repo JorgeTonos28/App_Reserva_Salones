@@ -1579,19 +1579,7 @@ function openUsuariosModal(){
       clearUserForm();
       return;
     }
-    const rows = items.map(u=>`
-      <tr class="u-row" data-email="${u.email}">
-        <td data-th="Nombre / Correo">${u.nombre||'(sin nombre)'}<div class="muted" style="font-size:12px">${u.email}</div></td>
-        <td data-th="Departamento">${u.departamento||''}</td>
-        <td data-th="Rol"><span class="tag">${u.rol||''}</span></td>
-        <td data-th="Prioridad">${Number(u.prioridad||0)}</td>
-        <td data-th="Salones con prioridad">${u.prioridad_salones||''}</td>
-        <td data-th="Estado">${u.estado||''}</td>
-        <td data-th="Ext.">${u.extension||''}</td>
-        <td data-th="Admin">${u.administracion_id||'1'}</td>
-      </tr>
-    `).join('');
-    const cards = items.map(u=>{
+    const rows = items.map(u=>{
       const email = escHtml(u.email||'');
       const name = escHtml(u.nombre||'(sin nombre)');
       const departamento = escHtml(u.departamento||'');
@@ -1601,36 +1589,47 @@ function openUsuariosModal(){
       const estado = escHtml(u.estado||'');
       const extension = escHtml(u.extension||'');
       const adminId = escHtml(u.administracion_id||'1');
-      const tagParts = [];
-      if (rol) tagParts.push(`<span class="tag">${rol}</span>`);
-      tagParts.push(`<span class="tag">Prioridad ${prioridad}</span>`);
-      if (estado) tagParts.push(`<span class="tag">${estado}</span>`);
-      const tagsHtml = tagParts.join('');
+      const deptLabel = departamento || '—';
+      const rolLabel = rol || '—';
+      const prioridadSalonesLabel = prioridadSalones || '—';
+      const estadoLabel = estado || '—';
+      const extensionLabel = extension || '—';
+      const adminLabel = adminId || '—';
+      return `
+        <tr class="u-row" data-email="${email}">
+          <td data-th="Nombre / Correo">${name}<div class="muted" style="font-size:12px">${email}</div></td>
+          <td data-th="Departamento">${deptLabel}</td>
+          <td data-th="Rol"><span class="tag">${rolLabel}</span></td>
+          <td data-th="Prioridad">${prioridad}</td>
+          <td data-th="Salones con prioridad">${prioridadSalonesLabel}</td>
+          <td data-th="Estado">${estadoLabel}</td>
+          <td data-th="Ext.">${extensionLabel}</td>
+          <td data-th="Admin">${adminLabel}</td>
+        </tr>
+      `;
+    }).join('');
+    const cards = items.map(u=>{
+      const email = escHtml(u.email||'');
+      const name = escHtml(u.nombre||'(sin nombre)');
+      const rol = escHtml(u.rol||'');
+      const prioridad = Number(u.prioridad||0);
+      const estadoRaw = String(u.estado||'').trim();
+      const estadoSlug = estadoRaw.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const estadoClass = estadoSlug ? `pill--estado-${estadoSlug}` : 'pill--estado-default';
+      const estadoLabel = estadoRaw ? escHtml(estadoRaw) : escHtml('Sin estado');
+      const prioridadLabel = escHtml(`Prioridad ${prioridad}`);
+      const departamentoRaw = String(u.departamento||'').trim();
+      const departamentoLabel = departamentoRaw ? escHtml(departamentoRaw) : escHtml('Sin departamento');
+      const pills = [];
+      if (rol) pills.push(`<span class="pill pill--role">${rol}</span>`);
+      pills.push(`<span class="pill pill--priority">${prioridadLabel}</span>`);
+      pills.push(`<span class="pill ${estadoClass}">${estadoLabel}</span>`);
+      pills.push(`<span class="pill pill--dept">${departamentoLabel}</span>`);
       return `
         <article class="user-card" data-email="${email}">
-          <div class="user-card__head">
-            <h4 class="user-card__name">${name}</h4>
-            <span class="user-card__email">${email}</span>
-          </div>
-          ${tagsHtml ? `<div class="user-card__tags">${tagsHtml}</div>` : ''}
-          <div class="user-card__meta">
-            <div class="user-card__meta-item">
-              <span class="user-card__meta-label">Departamento</span>
-              <span>${departamento || '—'}</span>
-            </div>
-            <div class="user-card__meta-item">
-              <span class="user-card__meta-label">Salones con prioridad</span>
-              <span>${prioridadSalones || '—'}</span>
-            </div>
-            <div class="user-card__meta-item">
-              <span class="user-card__meta-label">Extensión</span>
-              <span>${extension || '—'}</span>
-            </div>
-            <div class="user-card__meta-item">
-              <span class="user-card__meta-label">Administración</span>
-              <span>${adminId || '—'}</span>
-            </div>
-          </div>
+          <h4 class="user-card__name">${name}</h4>
+          <span class="user-card__email">${email}</span>
+          <div class="user-card__pills">${pills.join('')}</div>
         </article>
       `;
     }).join('');
