@@ -140,6 +140,7 @@
 
   /* ======= Overlay & modal ======= */
   .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; z-index:9999; padding:20px; box-sizing:border-box; overflow:auto; }
+  .overlay.overlay--busy{ text-align:center; }
   .overlay[hidden]{ display:none !important; }
   .spinner{ width:48px; height:48px; border:4px solid #fff; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg);} }
@@ -195,17 +196,21 @@
   }
 
   @media (max-width: 720px){
-    .overlay{ align-items:stretch; padding:14px 10px; }
+    .overlay{ padding:14px 10px; }
+    .overlay:not(.overlay--busy){ align-items:stretch; }
     .modal-card{ max-height:none; width:100%; text-align:left; }
     .modal-card--lg{ min-height:calc(100vh - 20px); }
     .modal-body{ overflow:visible; }
     .table-overflow--flat{ max-height:none; }
+    .user-list.table-overflow--flat{ max-height:min(60vh, calc(5 * 110px)); overflow-y:auto; }
   }
 
   @media (max-width: 640px){
     .table-overflow--flat{ padding:12px; border:1px solid var(--border); border-radius:14px; }
     .table-overflow--flat table{ display:none; }
-    .user-card-list{ display:flex; flex-direction:column; gap:12px; }
+    .user-card-list{ display:flex; flex-direction:column; gap:12px; max-height:min(60vh, calc(5 * 110px)); overflow-y:auto; padding-right:6px; }
+    .user-card-list::-webkit-scrollbar{ width:6px; }
+    .user-card-list::-webkit-scrollbar-thumb{ background:#d1d5db; border-radius:999px; }
   }
 
   @media (max-width: 640px){
