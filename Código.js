@@ -40,7 +40,7 @@ const SH_USR = SS.getSheetByName('Usuarios');
 const SH_CON = SS.getSheetByName('Conserjes');
 const SH_SAL = SS.getSheetByName('Salones');
 const SH_RES = SS.getSheetByName('Reservas');
-const APP_VERSION = 'salones-v10.8-2025-11-13';
+const APP_VERSION = 'v10.8-2025-11-05';
 const CON_UNASSIGNED_CODE = '__UNASSIGNED__';
 
 // ========= Helpers de tiempo =========
@@ -1318,20 +1318,8 @@ function apiExportReservasAdmin(filters){
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, headers.length);
   const adminEmail = (me && me.email) || '';
-  let file = null;
-  try { file = DriveApp.getFileById(ss.getId()); } catch(e) { file = null; }
-  if (file){
-    const destFolder = ensureReportFolderForUser_(adminEmail);
-    if (destFolder){
-      try {
-        file.moveTo(destFolder);
-      } catch (moveErr) {
-        try { destFolder.addFile(file); } catch(e){}
-      }
-    }
-    if (adminEmail){
-      try { file.addEditor(adminEmail); } catch(e){}
-    }
+  if (adminEmail){
+    try { DriveApp.getFileById(ss.getId()).addEditor(adminEmail); } catch(e){}
   }
   return { ok:true, url: ss.getUrl(), total: rows.length };
 }
@@ -2334,123 +2322,8 @@ function setupSheetsAndConfig(){
       }
     }
   });
-  populateDefaultConfig_(ss.getSheetByName('Config'));
-  populateSampleSalones_(ss.getSheetByName('Salones'));
-  populateSampleUsuarios_(ss.getSheetByName('Usuarios'));
   SpreadsheetApp.flush();
   return 'OK';
-}
-
-function populateDefaultConfig_(sheet){
-  if (!sheet) return;
-  const last = sheet.getLastRow();
-  if (last && last > 1) return;
-  const defaults = [
-    ['ADMIN_EMAILS', 'admin.demo@ejemplo.com;coadmin.demo@ejemplo.com'],
-    ['PUBLIC_WEBAPP_URL', 'https://script.google.com/a/macros/ejemplo.com/s/DEMO_PUBLIC_URL/exec'],
-    ['LOGO_FILE_ID', '1DEMOFILEID1234567890ABCDEF'],
-    ['CONSERJERIA_EMAILS', 'conserjeria.demo@ejemplo.com;apoyo.demo@ejemplo.com'],
-    ['HORARIO_INICIO', '07:00:00'],
-    ['HORARIO_FIN', '20:00:00'],
-    ['DURATION_MIN', 30],
-    ['DURATION_STEP', 30],
-    ['DURATION_MAX', 240],
-    ['MAIL_SENDER_NAME', 'INFOTEP - Reserva de Salones (Demo)'],
-    ['MAIL_REPLY_TO', 'contacto.demo@ejemplo.com'],
-    ['MAIL_BRAND_COLOR', '#1d4ed8'],
-    ['MAIL_BG_COLOR', '#f6f7fb'],
-    ['MAIL_TEXT_COLOR', '#111827'],
-    ['MAIL_CARD_BG', '#ffffff'],
-    ['MAIL_BORDER', '#e5e7eb'],
-    ['MAIL_LOGO_SIZE', 120],
-    ['ADMIN_CONTACT_NAME', 'Equipo de Servicios Generales – Demo'],
-    ['ADMIN_CONTACT_EMAIL', 'servicios.demo@ejemplo.com'],
-    ['ADMIN_CONTACT_EXTENSION', '2219'],
-    ['FOOTER_SIGNATURE_FILE_ID', '1DEMO-SIGNATURE-FILE-ID-XYZ'],
-    ['FOOTER_SIGNATURE_URL', 'signature-demo.png'],
-    ['FOOTER_SIGNATURE_WIDTH', 40],
-    ['FOOTER_CREDITS_TEXT', 'Dirección de Innovación - INFOTEP 2025 (Demo)'],
-  ];
-  sheet.getRange(2, 1, defaults.length, 2).setValues(defaults);
-}
-
-function populateSampleSalones_(sheet){
-  if (!sheet) return;
-  const last = sheet.getLastRow();
-  if (last && last > 1) return;
-  const samples = [
-    ['SALON-DEMO-01', 'Sala Innovación Demo', 24, 'SI', 'Sede Central', '', '1', 'NO'],
-    ['SALON-DEMO-02', 'Laboratorio Creativo', 18, 'SI', 'Sede Central', 'CONFIRM', '1', 'SI'],
-    ['SALON-DEMO-03', 'Aula Estratégica', 30, 'SI', 'Sede Oriental', '', '1', 'NO'],
-    ['SALON-DEMO-04', 'Sala Ejecutiva', 12, 'SI', 'Sede Norte', '', '1', 'NO'],
-    ['SALON-DEMO-05', 'Auditorio Demo', 80, 'SI', 'Sede Central', '', '1', 'SI'],
-  ];
-  sheet.getRange(2, 1, samples.length, samples[0].length).setValues(samples);
-}
-
-function populateSampleUsuarios_(sheet){
-  if (!sheet) return;
-  const last = sheet.getLastRow();
-  if (last && last > 1) return;
-  const users = [
-    ['admin.demo@ejemplo.com', 'Alba Administradora', 'Dirección Administrativa', 'ADMIN', 2, '', 'ACTIVO', '2201', '1'],
-    ['coordinador.demo@ejemplo.com', 'Irene Coordinadora', 'Servicios Generales', 'ADMIN', 1, '', 'ACTIVO', '2210', '1'],
-    ['solicitante.demo@ejemplo.com', 'Pedro Solicitante', 'Innovación y Desarrollo', 'SOLICITANTE', 1, '', 'ACTIVO', '2250', '1'],
-    ['prioridad0.demo@ejemplo.com', 'Carmen Sin Prioridad', 'Gestión Humana', 'SOLICITANTE', 0, '', 'ACTIVO', '2233', '1'],
-    ['prioridad2.demo@ejemplo.com', 'Marco Prioritario', 'Operaciones Estratégicas', 'SOLICITANTE', 2, 'SALON-DEMO-05;SALON-DEMO-02', 'ACTIVO', '2299', '1'],
-  ];
-  sheet.getRange(2, 1, users.length, users[0].length).setValues(users);
-}
-
-function ensureReportFolderForUser_(userEmail){
-  const normalized = String(userEmail || '').trim().toLowerCase();
-  if (!normalized) return null;
-  let target = null;
-  try {
-    const folders = DriveApp.getFoldersByName('App Reserva Salones');
-    while (folders.hasNext()){
-      const candidate = folders.next();
-      if (folderOwnedByUser_(candidate, normalized)){
-        target = candidate;
-        break;
-      }
-    }
-    if (!target){
-      target = DriveApp.createFolder('App Reserva Salones');
-    }
-    if (!target) return null;
-    try { target.addEditor(normalized); } catch(e){}
-    const reports = getOrCreateChildFolder_(target, 'Reportes');
-    if (reports){
-      try { reports.addEditor(normalized); } catch(e){}
-    }
-    try { target.setOwner(normalized); } catch(e){}
-    if (reports){
-      try { reports.setOwner(normalized); } catch(e){}
-      return reports;
-    }
-    return target;
-  } catch (err) {
-    return null;
-  }
-}
-
-function getOrCreateChildFolder_(parent, name){
-  if (!parent || !name) return null;
-  const folders = parent.getFoldersByName(name);
-  if (folders.hasNext()) return folders.next();
-  return parent.createFolder(name);
-}
-
-function folderOwnedByUser_(folder, normalizedEmail){
-  if (!folder || !normalizedEmail) return false;
-  try {
-    const meta = Drive.Files.get(folder.getId(), { fields: 'owners(emailAddress)' });
-    if (!meta || !Array.isArray(meta.owners)) return false;
-    return meta.owners.some(owner => String(owner.emailAddress || '').trim().toLowerCase() === normalizedEmail);
-  } catch (err) {
-    return false;
-  }
 }
 
 function installTriggers(){

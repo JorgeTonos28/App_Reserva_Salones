@@ -142,7 +142,7 @@
           <button id="a-resetForm" class="icon-btn" type="button" title="Restablecer formulario" aria-label="Restablecer formulario">
             <i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i>
           </button>
-          <button id="a-refreshSlots" class="icon-btn" type="button" title="Refrescar disponibilidades" aria-label="Refrescar disponibilidades">
+          <button id="a-refreshSlots" class="icon-btn" type="button" title="Actualizar disponibilidad" aria-label="Refrescar disponibilidades">
             <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
           </button>
         </div>
@@ -209,8 +209,8 @@
     <div class="section-head">
       <h2 style="margin:0">Historial de reservas</h2>
       <div class="actions-inline" style="gap:10px;">
-        <button id="btnReset" class="btn btn-blue btn--sm" type="button">Restablecer</button>
-        <button id="btnExport" class="btn btn-blue btn--sm" type="button">Exportar a Sheets</button>
+        <button id="btnReset" class="btn btn-blue btn--sm icon-btn" type="button" title="Restablecer filtros" aria-label="Restablecer filtros"><i class="fa-solid fa-arrow-rotate-left" aria-hidden="true"></i></button>
+        <button id="btnExport" class="btn btn-blue btn--sm" type="button" title="Exportar a excel" aria-label="Exportar a excel"><i class="fa-solid fa-file-excel"></i></button>
       </div>
     </div>
     <div class="section-title">Filtros</div>
@@ -288,7 +288,7 @@
   </div>
 
   <!-- Overlay global -->
-  <div id="overlay" class="overlay overlay--busy" hidden>
+  <div id="overlay" class="overlay" hidden>
     <div class="spinner" role="status" aria-label="Cargando"></div>
     <div class="overlay-msg" aria-live="polite">Cargando…</div>
   </div>
